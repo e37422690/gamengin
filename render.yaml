@@ -1,10 +1,10 @@
 services:
   - type: web
     name: kareforge-2d-engine
-    runtime: static
+    env: node
+    plan: free
     buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
