@@ -50,6 +50,7 @@ import {
 interface BlockWorkspaceProps {
   project: GameProject;
   scene: GameScene;
+  focusedObjectId?: string | null;
   onUpdateBlocks: (blocks: BlockInstance[], commitLabel?: string) => void;
   onUpdateSceneCustomCode?: (customCode: string, syncLocked: boolean) => void;
   onUpdateVariables: (vars: GlobalVariable[]) => void;
@@ -109,6 +110,7 @@ const QUICK_ACTION_TYPES: { type: BlockType; label: string }[] = [
 export const BlockWorkspace: React.FC<BlockWorkspaceProps> = ({
   project,
   scene,
+  focusedObjectId,
   onUpdateBlocks,
   onUpdateSceneCustomCode,
   onUpdateVariables,
@@ -133,15 +135,91 @@ export const BlockWorkspace: React.FC<BlockWorkspaceProps> = ({
   const [newVarType, setNewVarType] = useState<'number' | 'string' | 'boolean'>('number');
   const [newVarValue, setNewVarValue] = useState('0');
 
-  // Spacious layout controls: Default to 'top_wide' (100% Full-Width 3-4 Column Catalog!) so addable blocks are never narrow!
+  // "Neyin Kodu Nerede?" — Clear Section & Object Filtering
+  const [scriptGroupFilter, setScriptGroupFilter] = useState<
+    'all_grouped' | 'controls' | 'interactions' | 'world'
+  >('all_grouped');
+  const [objectFilterId, setObjectFilterId] = useState<string>('all');
+  const [collapsedEventIds, setCollapsedEventIds] = useState<Record<string, boolean>>({});
+  const [showQuickRecipesBar, setShowQuickRecipesBar] = useState<boolean>(false);
+
+  // Clean Left-to-Right layout by default so the Event-Action board has 100% vertical height and crystal-clear grouped sections!
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullCatalogMode, setIsFullCatalogMode] = useState(false);
-  const [catalogDockMode, setCatalogDockMode] = useState<'top_wide' | 'left_wide'>('top_wide');
-  const [topCatalogHeight, setTopCatalogHeight] = useState<number>(360);
+  const [catalogDockMode, setCatalogDockMode] = useState<'top_wide' | 'left_wide'>('left_wide');
+  const [topCatalogHeight, setTopCatalogHeight] = useState<number>(300);
   const [showPalettePanel, setShowPalettePanel] = useState(true);
   const [showRightCodePanel, setShowRightCodePanel] = useState(false);
-  const [boardColumns, setBoardColumns] = useState<1 | 2>(2);
+  const [boardColumns, setBoardColumns] = useState<1 | 2>(1);
   const [lastAddedToast, setLastAddedToast] = useState<string | null>(null);
+
+  const classifyEventGroup = (
+    ev: BlockInstance
+  ): 'controls' | 'interactions' | 'world' => {
+    if (
+      ev.type === 'event_key_held' ||
+      ev.type === 'event_key_pressed' ||
+      ev.type === 'event_state_changed' ||
+      ev.type === 'event_anim_trigger'
+    ) {
+      return 'controls';
+    }
+    if (
+      ev.type === 'event_on_collision' ||
+      ev.type === 'event_health_zero' ||
+      ev.type === 'event_object_clicked'
+    ) {
+      return 'interactions';
+    }
+    return 'world';
+  };
+
+  const describeEventTriggerHuman = (ev: BlockInstance): string => {
+    const keyNames: Record<string, string> = {
+      ArrowRight: 'Sağ Ok / D Tuşu',
+      ArrowLeft: 'Sol Ok / A Tuşu',
+      ArrowUp: 'Yukarı Ok / W Tuşu',
+      ArrowDown: 'Aşağı Ok / S Tuşu',
+      Space: 'Space (Boşluk) Tuşu',
+      KeyE: 'E / F (Ateş) Tuşu',
+      ShiftLeft: 'Shift (Dash) Tuşu',
+    };
+    const roleNames: Record<string, string> = {
+      collectible: '🪙 Altın / Ödül',
+      enemy: '👾 Düşman',
+      goal: '🏁 Bölüm Sonu Bayrağı',
+      powerup: '🧪 Can İksiri',
+      hazard: '⚠️ Diken / Tuzak',
+      npc: '💬 Rehber NPC',
+      checkpoint: '🚩 Kayıt Noktası',
+      platform: '🧱 Platform',
+    };
+    if (ev.type === 'event_key_held') {
+      const k = String(ev.params.key || 'ArrowRight');
+      return `⌨️ [${keyNames[k] || k}] Basılı Tutulurken`;
+    }
+    if (ev.type === 'event_key_pressed') {
+      const k = String(ev.params.key || 'Space');
+      return `⚡ [${keyNames[k] || k}] Basıldığı Anda`;
+    }
+    if (ev.type === 'event_on_collision') {
+      const r = String(ev.params.otherRole || ev.params.withRole || 'collectible');
+      return `💥 [${roleNames[r] || r}] İle Çarpıştığında`;
+    }
+    if (ev.type === 'event_game_start') {
+      return '🚀 Oyun / Sahne İlk Başladığında';
+    }
+    if (ev.type === 'event_boundary_hit') {
+      return `🛡️ Görünmez Harita Sınırına (${ev.params.edge || 'herhangi'}) Değdiğinde`;
+    }
+    if (ev.type === 'event_state_changed') {
+      return `🏃 Karakter Durumu (${ev.params.stateEvent || 'landed'}) Olduğunda`;
+    }
+    if (ev.type === 'event_anim_trigger') {
+      return `🎞️ Animasyon (${ev.params.clip || 'attack'}) Tetiklendiğinde`;
+    }
+    return getBlockDefinition(ev.type)?.label || ev.type;
+  };
 
   // Code Sync Lock vs Manual Editable Mode ("Üretilen oyun kodu salt okunur senkron kapatılamıyor" çözümü)
   const [isCodeSyncLocked, setIsCodeSyncLocked] = useState<boolean>(
@@ -1011,680 +1089,966 @@ export const BlockWorkspace: React.FC<BlockWorkspaceProps> = ({
             </>
           )}
 
-          {/* 2. Center Ultra-Wide Event-Action Visual Graph */}
+          {/* 2. Center Structured & Grouped Event-Action Studio */}
           <div
             className={`${
               isFullCatalogMode && showPalettePanel && !isFocusMode ? 'hidden' : 'flex-1 flex'
             } flex-col h-full min-w-[380px] min-h-0 overflow-hidden bg-[#0E1117]`}
           >
-          {/* Quick Event Adder Bar right inside the canvas */}
-          <div className="px-5 py-2.5 bg-[#151922] border-b border-[#2B3242] flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-bold text-[#68B6FF] mr-1 flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5" />
-                Hızlı Olay Ekle:
-              </span>
-              {QUICK_EVENT_TYPES.map((qEv) => (
-                <button
-                  key={qEv.type}
-                  onClick={() => {
-                    const def = getBlockDefinition(qEv.type);
-                    if (def) handleAddBlockFromCatalog(def);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-[#1E2432] hover:bg-[#478CBF] text-xs font-semibold text-slate-100 border border-[#2B3242] transition-colors"
-                >
-                  {qEv.label}
-                </button>
-              ))}
-            </div>
-
-            {selectedNestedParentId && (
-              <button
-                onClick={() => setSelectedNestedParentId(null)}
-                className="px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30"
-              >
-                Alt Koşul Seçimini Kaldır
-              </button>
-            )}
-          </div>
-
-          {/* 1-Click Ready Block Recipes Bar for Instant Game Mechanics */}
-          <div className="px-5 py-2 bg-[#11151E] border-b border-[#2B3242] flex flex-wrap items-center gap-1.5 shrink-0">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400 mr-1">
-              ⚡ 1-Tık Hazır Kod Tarifleri:
-            </span>
-            {[
-              {
-                label: '🦘 Space ile Çift Zıplama + Ses',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_key_pressed',
-                    targetObjectId: pId,
-                    params: { key: 'Space' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'move_jump',
-                        targetObjectId: pId,
-                        params: { force: 440 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'audio_play_sfx',
-                        targetObjectId: 'scene',
-                        params: { sound: 'jump' },
-                      },
-                    ],
-                  };
-                },
-              },
-              {
-                label: '🔫 E Tuşuyla Lazer Ateşle',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_key_pressed',
-                    targetObjectId: pId,
-                    params: { key: 'KeyE' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'act_shoot_projectile',
-                        targetObjectId: pId,
-                        params: { speed: 620, color: '#38BDF8', damage: 25 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'audio_play_sfx',
-                        targetObjectId: 'scene',
-                        params: { sound: 'laser' },
-                      },
-                    ],
-                  };
-                },
-              },
-              {
-                label: '💨 Shift ile Hızlı Dash',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_key_pressed',
-                    targetObjectId: pId,
-                    params: { key: 'ShiftLeft' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'move_dash',
-                        targetObjectId: pId,
-                        params: { power: 540 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'anim_play',
-                        targetObjectId: pId,
-                        params: { animState: 'dash', restartIfPlaying: true },
-                      },
-                    ],
-                  };
-                },
-              },
-              {
-                label: '🪙 Altın Toplayınca +25 Puan & Yok Et',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_on_collision',
-                    targetObjectId: pId,
-                    params: { withRole: 'collectible' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'ui_add_score',
-                        targetObjectId: 'scene',
-                        params: { points: 25 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'sense_destroy_other',
-                        targetObjectId: 'scene',
-                        params: {},
-                      },
-                      {
-                        id: `act_r3_${Date.now()}`,
-                        type: 'audio_play_sfx',
-                        targetObjectId: 'scene',
-                        params: { sound: 'coin' },
-                      },
-                    ],
-                  };
-                },
-              },
-              {
-                label: '💥 Düşmana Çarpınca Hasar + Kamera Sarsıntısı',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_on_collision',
-                    targetObjectId: pId,
-                    params: { withRole: 'enemy' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'sense_damage_target',
-                        targetObjectId: pId,
-                        params: { amount: -20 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'camera_shake',
-                        targetObjectId: 'scene',
-                        params: { intensity: 8 },
-                      },
-                      {
-                        id: `act_r3_${Date.now()}`,
-                        type: 'audio_play_sfx',
-                        targetObjectId: 'scene',
-                        params: { sound: 'hit' },
-                      },
-                    ],
-                  };
-                },
-              },
-              {
-                label: '🛡️ Harita Sınırından Yaylı Sekme',
-                build: (): BlockInstance => {
-                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
-                  return {
-                    id: `ev_recipe_${Date.now()}`,
-                    type: 'event_boundary_hit',
-                    targetObjectId: pId,
-                    params: { edge: 'any' },
-                    children: [
-                      {
-                        id: `act_r1_${Date.now()}`,
-                        type: 'world_set_boundary_action',
-                        targetObjectId: 'scene',
-                        params: { action: 'bounce', bouncePower: 500 },
-                      },
-                      {
-                        id: `act_r2_${Date.now()}`,
-                        type: 'audio_play_sfx',
-                        targetObjectId: 'scene',
-                        params: { sound: 'jump' },
-                      },
-                    ],
-                  };
-                },
-              },
-            ].map((recipe) => (
-              <button
-                key={recipe.label}
-                onClick={() => {
-                  const newEv = recipe.build();
-                  onUpdateBlocks([...scene.blocks, newEv], `Hazır Tarif: ${recipe.label}`);
-                  setSelectedEventId(newEv.id);
-                  setLastAddedToast(`Hazır Tarif Eklendi: ${recipe.label}`);
-                }}
-                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-600 hover:text-white text-[11px] font-bold text-emerald-300 border border-emerald-500/30 transition-colors"
-              >
-                {recipe.label}
-              </button>
-            ))}
-          </div>
-
-          {diagnostics.length > 0 && (
-            <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-2 text-xs text-amber-300 shrink-0">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-              <span>
-                <strong>{diagnostics.length} mantık bildirimi:</strong> {diagnostics[0].message}
-              </span>
-            </div>
-          )}
-
-          {/* Scrollable Wide Block Board (Full Width, 1-Col or 2-Col Grid!) */}
-          <div className="flex-1 overflow-y-auto p-5">
-            <div
-              style={{ zoom: blockScale }}
-              className={
-                boardColumns === 2 && scene.blocks.length > 1
-                  ? 'grid grid-cols-1 2xl:grid-cols-2 lg:grid-cols-2 gap-5 w-full'
-                  : 'space-y-5 w-full'
-              }
-            >
-              {scene.blocks.length === 0 ? (
-                <div className="col-span-2 h-80 rounded-2xl border-2 border-dashed border-[#2B3242] flex flex-col items-center justify-center text-center p-8">
-                  <p className="text-base font-bold text-slate-200 mb-2">
-                    Bu sahnede henüz olay bloğu bulunmuyor
-                  </p>
-                  <p className="text-sm text-slate-400 max-w-lg mb-5">
-                    Üstteki <strong>Hızlı Olay Ekle</strong> çubuğundan veya sol kütüphaneden bir başlatıcı olay seçerek oyununuzun mantığını kurgulayın.
-                  </p>
-                  <button
-                    onClick={() => {
-                      const def = getBlockDefinition('event_game_start');
-                      if (def) handleAddBlockFromCatalog(def);
-                    }}
-                    className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#478CBF] hover:bg-[#3A78A6] text-white shadow-md"
-                  >
-                    + "Oyun Başladığında" Bloğu Ekle
-                  </button>
-                </div>
-              ) : (
-                scene.blocks.map((eventBlock, evIdx) => {
-                  const eventDef = getBlockDefinition(eventBlock.type);
-                  const eventColor = eventDef
-                    ? BLOCK_CATEGORY_META[eventDef.category]?.color || '#D97706'
-                    : '#D97706';
-                  const isSelected = selectedEventId === eventBlock.id;
-                  const children = eventBlock.children || [];
-
-                  return (
-                    <div
-                      key={eventBlock.id}
-                      onClick={() => setSelectedEventId(eventBlock.id)}
-                      className={`rounded-2xl border-2 transition-all shadow-lg flex flex-col justify-between ${
-                        isSelected
-                          ? 'border-[#68B6FF] bg-[#161C28] shadow-sky-950/30'
-                          : 'border-[#2B3242] bg-[#141822] hover:border-slate-600'
+            {/* Top "Kimin Kodu Nerede?" Navigation & Object Filter Bar */}
+            <div className="px-5 py-3 bg-[#151922] border-b border-[#2B3242] flex flex-col gap-2.5 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {/* Category Section Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#68B6FF] mr-1">
+                    🧭 Kod Rehberi:
+                  </span>
+                  {[
+                    {
+                      id: 'all_grouped' as const,
+                      label: `📋 Tüm Kodlar (${scene.blocks.length})`,
+                      badgeClass: 'border-[#478CBF]',
+                    },
+                    {
+                      id: 'controls' as const,
+                      label: `🎮 1. Kahraman Kontrolleri (${
+                        scene.blocks.filter((b) => classifyEventGroup(b) === 'controls').length
+                      })`,
+                      badgeClass: 'border-sky-500/50',
+                    },
+                    {
+                      id: 'interactions' as const,
+                      label: `⚡ 2. Çarpışma & Ödüller (${
+                        scene.blocks.filter((b) => classifyEventGroup(b) === 'interactions').length
+                      })`,
+                      badgeClass: 'border-amber-500/50',
+                    },
+                    {
+                      id: 'world' as const,
+                      label: `🌍 3. Dünya & Başlangıç (${
+                        scene.blocks.filter((b) => classifyEventGroup(b) === 'world').length
+                      })`,
+                      badgeClass: 'border-emerald-500/50',
+                    },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setScriptGroupFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                        scriptGroupFilter === tab.id
+                          ? 'bg-[#478CBF] text-white border-[#68B6FF] shadow-sm'
+                          : `bg-[#11141A] text-slate-300 hover:text-white ${tab.badgeClass}`
                       }`}
                     >
-                      <div>
-                        {/* Event Root Header */}
-                        <div
-                          className="px-4 py-3 rounded-t-2xl flex flex-wrap items-center justify-between gap-2.5 border-b border-[#2B3242]"
-                          style={{
-                            background: `linear-gradient(90deg, ${eventColor}28 0%, rgba(24,28,36,0.96) 100%)`,
-                          }}
-                        >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className="px-2 py-0.5 rounded text-xs font-extrabold uppercase tracking-wider text-slate-950 shadow-sm"
-                              style={{ backgroundColor: eventColor }}
-                            >
-                              OLAY #{evIdx + 1}
-                            </span>
-                            <span className="text-sm font-bold text-white">
-                              {eventDef?.label || eventBlock.type}
-                            </span>
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
 
-                            {/* Target Object Selector */}
-                            <div
-                              className="flex items-center gap-1 bg-[#11141A] px-2 py-1 rounded-lg border border-[#2B3242]"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span className="text-[11px] text-slate-400">Düğüm:</span>
-                              <select
-                                value={eventBlock.targetObjectId}
-                                onChange={(e) =>
-                                  handleUpdateBlockTarget(eventBlock.id, null, e.target.value)
-                                }
-                                className="bg-transparent text-xs font-semibold text-[#68B6FF] focus:outline-none"
-                              >
-                                <option value="scene" className="bg-[#11141A]">
-                                  Sahne Kökü
-                                </option>
-                                {scene.objects.map((o) => (
-                                  <option key={o.id} value={o.id} className="bg-[#11141A]">
-                                    {o.name} ({o.role})
-                                  </option>
-                                ))}
-                              </select>
+                {/* Right Controls: Object Filter + Collapse All + Ready Recipes Toggle */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5 bg-[#11141A] px-2.5 py-1 rounded-lg border border-[#2B3242]">
+                    <span className="text-[11px] font-bold text-slate-400">🎯 Kimin Kodu:</span>
+                    <select
+                      value={objectFilterId}
+                      onChange={(e) => setObjectFilterId(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-[#68B6FF] focus:outline-none"
+                    >
+                      <option value="all" className="bg-[#11141A]">
+                        Tüm Nesneler ({scene.blocks.length} Kural)
+                      </option>
+                      <option value="scene" className="bg-[#11141A]">
+                        🌍 Sahne / Dünya Kökü
+                      </option>
+                      {scene.objects.map((o) => {
+                        const count = scene.blocks.filter((b) => b.targetObjectId === o.id).length;
+                        if (count === 0 && o.role === 'platform') return null;
+                        return (
+                          <option key={o.id} value={o.id} className="bg-[#11141A]">
+                            {o.name} ({count} Kural)
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {objectFilterId !== 'all' && (
+                      <button
+                        onClick={() => setObjectFilterId('all')}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 font-bold"
+                      >
+                        Temizle
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const allCollapsed =
+                        scene.blocks.length > 0 &&
+                        scene.blocks.every((b) => collapsedEventIds[b.id]);
+                      if (allCollapsed) {
+                        setCollapsedEventIds({});
+                      } else {
+                        const next: Record<string, boolean> = {};
+                        scene.blocks.forEach((b) => {
+                          next[b.id] = true;
+                        });
+                        setCollapsedEventIds(next);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-[#11141A] hover:bg-[#1E2432] text-xs font-semibold text-slate-200 border border-[#2B3242] transition-colors"
+                    title="Tüm kod kartlarını tek satır özete daralt veya detaylarını aç"
+                  >
+                    {scene.blocks.length > 0 && scene.blocks.every((b) => collapsedEventIds[b.id])
+                      ? '⤢ Tüm Kod Adımlarını Aç'
+                      : '▾ Tümünü Tek Satır Özet Yap'}
+                  </button>
+
+                  <button
+                    onClick={() => setShowQuickRecipesBar((v) => !v)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                      showQuickRecipesBar
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                        : 'bg-[#11141A] text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10'
+                    }`}
+                  >
+                    ⚡ Hazır Kod Tarifleri {showQuickRecipesBar ? '(Açık)' : '(Göster)'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Quick Event Trigger Adder */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#232938]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-amber-400 mr-1 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    + Yeni Kural Başlat (Ne Zaman?):
+                  </span>
+                  {QUICK_EVENT_TYPES.map((qEv) => (
+                    <button
+                      key={qEv.type}
+                      onClick={() => {
+                        const def = getBlockDefinition(qEv.type);
+                        if (def) handleAddBlockFromCatalog(def);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#1E2432] hover:bg-[#478CBF] text-xs font-semibold text-slate-100 border border-[#2B3242] transition-colors"
+                    >
+                      + {qEv.label}
+                    </button>
+                  ))}
+                </div>
+
+                {selectedNestedParentId && (
+                  <button
+                    onClick={() => setSelectedNestedParentId(null)}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30"
+                  >
+                    Alt Koşul Seçimini Kaldır
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Collapsible 1-Click Ready Block Recipes Drawer */}
+            {showQuickRecipesBar && (
+              <div className="px-5 py-2.5 bg-[#11151E] border-b border-emerald-500/30 flex flex-wrap items-center gap-1.5 shrink-0">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400 mr-1">
+                  ⚡ 1-Tıkla Hazır Mekanik Ekle:
+                </span>
+                {[
+                  {
+                    label: '🦘 Space ile Çift Zıplama + Ses',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_key_pressed',
+                        targetObjectId: pId,
+                        params: { key: 'Space' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'move_jump',
+                            targetObjectId: pId,
+                            params: { force: 440 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'audio_play_sfx',
+                            targetObjectId: 'scene',
+                            params: { sound: 'jump' },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                  {
+                    label: '🔫 E Tuşuyla Lazer Ateşle',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_key_pressed',
+                        targetObjectId: pId,
+                        params: { key: 'KeyE' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'act_shoot_projectile',
+                            targetObjectId: pId,
+                            params: { speed: 620, color: '#38BDF8', damage: 25 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'audio_play_sfx',
+                            targetObjectId: 'scene',
+                            params: { sound: 'laser' },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                  {
+                    label: '💨 Shift ile Hızlı Dash',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_key_pressed',
+                        targetObjectId: pId,
+                        params: { key: 'ShiftLeft' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'move_dash',
+                            targetObjectId: pId,
+                            params: { power: 540 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'anim_play',
+                            targetObjectId: pId,
+                            params: { animState: 'dash', restartIfPlaying: true },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                  {
+                    label: '🪙 Altın Toplayınca +25 Puan & Yok Et',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_on_collision',
+                        targetObjectId: pId,
+                        params: { withRole: 'collectible' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'ui_add_score',
+                            targetObjectId: 'scene',
+                            params: { points: 25 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'sense_destroy_other',
+                            targetObjectId: 'scene',
+                            params: {},
+                          },
+                          {
+                            id: `act_r3_${Date.now()}`,
+                            type: 'audio_play_sfx',
+                            targetObjectId: 'scene',
+                            params: { sound: 'coin' },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                  {
+                    label: '💥 Düşmana Çarpınca Hasar + Kamera Sarsıntısı',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_on_collision',
+                        targetObjectId: pId,
+                        params: { withRole: 'enemy' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'sense_damage_target',
+                            targetObjectId: pId,
+                            params: { amount: -20 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'camera_shake',
+                            targetObjectId: 'scene',
+                            params: { intensity: 8 },
+                          },
+                          {
+                            id: `act_r3_${Date.now()}`,
+                            type: 'audio_play_sfx',
+                            targetObjectId: 'scene',
+                            params: { sound: 'hit' },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                  {
+                    label: '🛡️ Harita Sınırından Yaylı Sekme',
+                    build: (): BlockInstance => {
+                      const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                      return {
+                        id: `ev_recipe_${Date.now()}`,
+                        type: 'event_boundary_hit',
+                        targetObjectId: pId,
+                        params: { edge: 'any' },
+                        children: [
+                          {
+                            id: `act_r1_${Date.now()}`,
+                            type: 'world_set_boundary_action',
+                            targetObjectId: 'scene',
+                            params: { action: 'bounce', bouncePower: 500 },
+                          },
+                          {
+                            id: `act_r2_${Date.now()}`,
+                            type: 'audio_play_sfx',
+                            targetObjectId: 'scene',
+                            params: { sound: 'jump' },
+                          },
+                        ],
+                      };
+                    },
+                  },
+                ].map((recipe) => (
+                  <button
+                    key={recipe.label}
+                    onClick={() => {
+                      const newEv = recipe.build();
+                      onUpdateBlocks([...scene.blocks, newEv], `Hazır Tarif: ${recipe.label}`);
+                      setSelectedEventId(newEv.id);
+                      setLastAddedToast(`Hazır Tarif Eklendi: ${recipe.label}`);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-600 hover:text-white text-[11px] font-bold text-emerald-300 border border-emerald-500/30 transition-colors"
+                  >
+                    {recipe.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {diagnostics.length > 0 && (
+              <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-2 text-xs text-amber-300 shrink-0">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>
+                  <strong>{diagnostics.length} mantık bildirimi:</strong> {diagnostics[0].message}
+                </span>
+              </div>
+            )}
+
+            {/* Scrollable Structured Block Board Grouped by Purpose */}
+            <div className="flex-1 overflow-y-auto p-5">
+              <div style={{ zoom: blockScale }} className="space-y-7 w-full">
+                {scene.blocks.length === 0 ? (
+                  <div className="h-80 rounded-2xl border-2 border-dashed border-[#2B3242] flex flex-col items-center justify-center text-center p-8">
+                    <p className="text-base font-bold text-slate-200 mb-2">
+                      Bu sahnede henüz olay bloğu bulunmuyor
+                    </p>
+                    <p className="text-sm text-slate-400 max-w-lg mb-5">
+                      Üstteki <strong>+ Yeni Kural Başlat</strong> çubuğundan veya sol kütüphaneden bir başlatıcı olay seçerek oyununuzun mantığını kurgulayın.
+                    </p>
+                    <button
+                      onClick={() => {
+                        const def = getBlockDefinition('event_game_start');
+                        if (def) handleAddBlockFromCatalog(def);
+                      }}
+                      className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#478CBF] hover:bg-[#3A78A6] text-white shadow-md"
+                    >
+                      + "Oyun Başladığında" Bloğu Ekle
+                    </button>
+                  </div>
+                ) : (
+                  (() => {
+                    const SECTIONS: {
+                      id: 'controls' | 'interactions' | 'world';
+                      title: string;
+                      subtitle: string;
+                      accentBorder: string;
+                      accentBg: string;
+                      accentText: string;
+                    }[] = [
+                      {
+                        id: 'controls',
+                        title: '🎮 1. BÖLÜM: KAHRAMAN HAREKET, ZIPLAMA & YETENEK KONTROLLERİ',
+                        subtitle:
+                          'Klavye tuşlarına basıldığında karakterin yürümesi, zıplaması, lazer ateşlemesi ve dash atması gibi kontroller buradadır.',
+                        accentBorder: 'border-sky-500/40',
+                        accentBg: 'bg-sky-500/10',
+                        accentText: 'text-sky-300',
+                      },
+                      {
+                        id: 'interactions',
+                        title: '⚡ 2. BÖLÜM: ÇARPIŞMA, ÖDÜL TOPLAMA, DÜŞMAN & BİTİŞ KAPISI KURALLARI',
+                        subtitle:
+                          'Altın toplayınca puan kazanma, düşmana veya mermiye çarpınca olacaklar ve bitiş portalına ulaşma kuralları buradadır.',
+                        accentBorder: 'border-amber-500/40',
+                        accentBg: 'bg-amber-500/10',
+                        accentText: 'text-amber-300',
+                      },
+                      {
+                        id: 'world',
+                        title: '🌍 3. BÖLÜM: DÜNYA AYARLARI, GÖRÜNMEZ SINIRLAR & OYUN BAŞLANGICI',
+                        subtitle:
+                          'Oyun başladığında yapılacak ilk ayarlar, görünmez harita sınırlarına değince ne olacağı ve zamanlayıcılar buradadır.',
+                        accentBorder: 'border-emerald-500/40',
+                        accentBg: 'bg-emerald-500/10',
+                        accentText: 'text-emerald-300',
+                      },
+                    ];
+
+                    const filteredBlocks = scene.blocks.filter((b) => {
+                      if (objectFilterId !== 'all' && b.targetObjectId !== objectFilterId) {
+                        return false;
+                      }
+                      if (
+                        scriptGroupFilter !== 'all_grouped' &&
+                        classifyEventGroup(b) !== scriptGroupFilter
+                      ) {
+                        return false;
+                      }
+                      return true;
+                    });
+
+                    if (filteredBlocks.length === 0) {
+                      return (
+                        <div className="rounded-2xl border border-[#2B3242] bg-[#141822] p-8 text-center">
+                          <p className="text-sm font-bold text-slate-200 mb-2">
+                            Seçili filtreye uygun kod kuralı bulunamadı.
+                          </p>
+                          <button
+                            onClick={() => {
+                              setScriptGroupFilter('all_grouped');
+                              setObjectFilterId('all');
+                            }}
+                            className="px-4 py-2 rounded-lg bg-[#478CBF] text-xs font-bold text-white"
+                          >
+                            Tüm Kuralları Göster
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    const visibleSections =
+                      scriptGroupFilter === 'all_grouped'
+                        ? SECTIONS
+                        : SECTIONS.filter((s) => s.id === scriptGroupFilter);
+
+                    return visibleSections.map((section) => {
+                      const sectionBlocks = filteredBlocks.filter(
+                        (b) => classifyEventGroup(b) === section.id
+                      );
+                      if (sectionBlocks.length === 0) return null;
+
+                      return (
+                        <div key={section.id} className="space-y-3.5">
+                          {/* Section Banner Header */}
+                          <div
+                            className={`px-4 py-3 rounded-xl border ${section.accentBorder} ${section.accentBg} flex flex-wrap items-center justify-between gap-2`}
+                          >
+                            <div>
+                              <h3 className={`text-xs font-extrabold tracking-wide ${section.accentText}`}>
+                                {section.title}
+                              </h3>
+                              <p className="text-[11px] text-slate-300 mt-0.5">{section.subtitle}</p>
                             </div>
-
-                            {/* Event Root Parameters */}
-                            {eventDef?.params.map((param) => (
-                              <div
-                                key={param.name}
-                                className="flex items-center gap-1.5 bg-[#11141A] px-2 py-1 rounded-lg border border-[#2B3242]"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <span className="text-xs font-medium text-slate-300">
-                                  {param.label}:
-                                </span>
-                                {renderParamInput(
-                                  eventBlock.id,
-                                  null,
-                                  param,
-                                  eventBlock.params[param.name]
-                                )}
-                              </div>
-                            ))}
+                            <span className="px-2.5 py-1 rounded-lg bg-[#11141A]/80 border border-[#2B3242] text-[11px] font-bold text-slate-200">
+                              {sectionBlocks.length} Kural
+                            </span>
                           </div>
 
-                          <div className="flex items-center gap-1">
-                            {isSelected && (
-                              <span className="text-[11px] font-bold text-[#68B6FF] bg-[#478CBF]/20 px-2 py-0.5 rounded border border-[#68B6FF]/40">
-                                Seçili
-                              </span>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDuplicateBlock(eventBlock.id, null);
-                              }}
-                              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
-                              title="Olay Grubunu Çoğalt"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteBlock(eventBlock.id, null);
-                              }}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                              title="Olay Grubunu Sil"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Natural-Language Rule Explanation Strip */}
-                        <div className="px-4 py-1.5 bg-[#0F131B] border-b border-[#232938] text-[11px] text-slate-300 flex items-center gap-2">
-                          <span className="text-indigo-400 font-bold shrink-0">💬 Kural Özeti:</span>
-                          <span className="truncate">
-                            <strong>
-                              {scene.objects.find((o) => o.id === eventBlock.targetObjectId)?.name || 'Sahne'}
-                            </strong>{' '}
-                            üzerinde{' '}
-                            <span className="text-amber-300 font-semibold">
-                              "{eventDef?.label || eventBlock.type}"
-                            </span>{' '}
-                            gerçekleştiğinde →{' '}
-                            {children.length === 0 ? (
-                              <span className="text-slate-500 italic">Henüz aksiyon eklenmedi</span>
-                            ) : (
-                              <span className="text-emerald-300 font-medium">
-                                {children
-                                  .map((c) => getBlockDefinition(c.type)?.label || c.type)
-                                  .join('  ➔  ')}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-
-                        {/* Children Action Blocks */}
-                        <div className="p-4 pl-6 space-y-2.5 relative">
-                          <div className="absolute left-3 top-3 bottom-3 w-1 bg-[#2B3242] rounded-full" />
-
-                          {children.length === 0 ? (
-                            <div className="py-3 px-4 rounded-xl border border-dashed border-[#2B3242] text-xs text-slate-400">
-                              Aşağıdaki hızlı menüden veya sol kütüphaneden aksiyon bloğu ekleyin.
-                            </div>
-                          ) : (
-                            children.map((child, idx) => {
-                              const childDef = getBlockDefinition(child.type);
-                              const childColor = childDef
-                                ? BLOCK_CATEGORY_META[childDef.category]?.color || '#478CBF'
-                                : '#478CBF';
-                              const isContainer = Boolean(childDef?.isContainer);
-                              const isNestedTarget = selectedNestedParentId === child.id;
-                              const subChildren = child.children || [];
+                          {/* Cards Grid for this Section */}
+                          <div
+                            className={
+                              boardColumns === 2 && sectionBlocks.length > 1
+                                ? 'grid grid-cols-1 2xl:grid-cols-2 lg:grid-cols-2 gap-4 w-full'
+                                : 'space-y-4 w-full'
+                            }
+                          >
+                            {sectionBlocks.map((eventBlock) => {
+                              const evIdx = scene.blocks.findIndex((b) => b.id === eventBlock.id);
+                              const eventDef = getBlockDefinition(eventBlock.type);
+                              const eventColor = eventDef
+                                ? BLOCK_CATEGORY_META[eventDef.category]?.color || '#D97706'
+                                : '#D97706';
+                              const isSelected = selectedEventId === eventBlock.id;
+                              const isCollapsed = Boolean(collapsedEventIds[eventBlock.id]);
+                              const children = eventBlock.children || [];
+                              const ownerObj = scene.objects.find(
+                                (o) => o.id === eventBlock.targetObjectId
+                              );
+                              const ownerBadgeLabel = ownerObj
+                                ? `🎯 ${ownerObj.name}`
+                                : '🌍 Sahne / Dünya';
 
                               return (
-                                <div key={child.id} className="space-y-2">
-                                  <div
-                                    className={`relative flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-xl bg-[#11141A] border transition-colors ${
-                                      isNestedTarget
-                                        ? 'border-amber-400 ring-1 ring-amber-400/30'
-                                        : 'border-[#2B3242] hover:border-slate-600'
-                                    }`}
-                                    style={{
-                                      borderLeftWidth: '5px',
-                                      borderLeftColor: childColor,
-                                    }}
-                                  >
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="text-[11px] font-mono text-slate-400 bg-[#181C24] px-1.5 py-0.5 rounded border border-[#2B3242]">
-                                        {evIdx + 1}.{idx + 1}
-                                      </span>
-                                      <span className="text-xs font-bold text-slate-100">
-                                        {childDef?.label || child.type}
-                                      </span>
-
-                                      {/* Target selector for action block */}
-                                      <div
-                                        className="flex items-center gap-1 bg-[#181C24] px-2 py-0.5 rounded border border-[#2B3242]"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <select
-                                          value={child.targetObjectId}
-                                          onChange={(e) =>
-                                            handleUpdateBlockTarget(
-                                              eventBlock.id,
-                                              child.id,
-                                              e.target.value
-                                            )
-                                          }
-                                          className="bg-transparent text-xs text-[#68B6FF] focus:outline-none"
+                                <div
+                                  key={eventBlock.id}
+                                  onClick={() => setSelectedEventId(eventBlock.id)}
+                                  className={`rounded-2xl border-2 transition-all shadow-lg flex flex-col justify-between ${
+                                    isSelected
+                                      ? 'border-[#68B6FF] bg-[#161C28] shadow-sky-950/30'
+                                      : 'border-[#2B3242] bg-[#141822] hover:border-slate-600'
+                                  }`}
+                                >
+                                  <div>
+                                    {/* Clear Step-by-Step Event Card Header */}
+                                    <div
+                                      className="px-4 py-3 rounded-t-2xl flex flex-wrap items-center justify-between gap-2.5 border-b border-[#2B3242]"
+                                      style={{
+                                        background: `linear-gradient(90deg, ${eventColor}28 0%, rgba(24,28,36,0.96) 100%)`,
+                                      }}
+                                    >
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span
+                                          className="px-2 py-0.5 rounded text-xs font-extrabold uppercase tracking-wider text-slate-950 shadow-sm"
+                                          style={{ backgroundColor: eventColor }}
                                         >
-                                          <option value="scene" className="bg-[#11141A]">
-                                            Sahne
-                                          </option>
-                                          {scene.objects.map((o) => (
-                                            <option key={o.id} value={o.id} className="bg-[#11141A]">
-                                              {o.name}
+                                          KURAL #{evIdx + 1}
+                                        </span>
+
+                                        {/* Clear Human Trigger Summary Badge */}
+                                        <span className="text-sm font-extrabold text-white">
+                                          {describeEventTriggerHuman(eventBlock)}
+                                        </span>
+
+                                        {/* Clear "Kimin Kodu" Selector */}
+                                        <div
+                                          className="flex items-center gap-1 bg-[#11141A] px-2.5 py-1 rounded-lg border border-[#2B3242]"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <span className="text-[11px] font-semibold text-slate-400">
+                                            Kimin Kodu:
+                                          </span>
+                                          <select
+                                            value={eventBlock.targetObjectId}
+                                            onChange={(e) =>
+                                              handleUpdateBlockTarget(
+                                                eventBlock.id,
+                                                null,
+                                                e.target.value
+                                              )
+                                            }
+                                            className="bg-transparent text-xs font-bold text-[#68B6FF] focus:outline-none"
+                                          >
+                                            <option value="scene" className="bg-[#11141A]">
+                                              🌍 Sahne / Dünya Kökü
+                                            </option>
+                                            {scene.objects.map((o) => (
+                                              <option
+                                                key={o.id}
+                                                value={o.id}
+                                                className="bg-[#11141A]"
+                                              >
+                                                🎯 {o.name} ({o.role})
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        {/* Event Root Parameters */}
+                                        {eventDef?.params.map((param) => (
+                                          <div
+                                            key={param.name}
+                                            className="flex items-center gap-1.5 bg-[#11141A] px-2 py-1 rounded-lg border border-[#2B3242]"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span className="text-xs font-medium text-slate-300">
+                                              {param.label}:
+                                            </span>
+                                            {renderParamInput(
+                                              eventBlock.id,
+                                              null,
+                                              param,
+                                              eventBlock.params[param.name]
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setCollapsedEventIds((prev) => ({
+                                              ...prev,
+                                              [eventBlock.id]: !prev[eventBlock.id],
+                                            }));
+                                          }}
+                                          className="px-2.5 py-1 rounded-lg bg-[#11141A] hover:bg-[#1E2432] text-[11px] font-bold text-slate-200 border border-[#2B3242] transition-colors"
+                                          title="Kod adımlarını daralt / genişlet"
+                                        >
+                                          {isCollapsed
+                                            ? `▸ Adımları Göster (${children.length})`
+                                            : '▾ Özete Daralt'}
+                                        </button>
+
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDuplicateBlock(eventBlock.id, null);
+                                          }}
+                                          className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                                          title="Bu Kuralı Çoğalt"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteBlock(eventBlock.id, null);
+                                          }}
+                                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                                          title="Bu Kuralı Sil"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Always-Visible Plain-Turkish Summary Strip */}
+                                    <div className="px-4 py-2 bg-[#0F131B] border-b border-[#232938] text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-bold text-[11px] shrink-0">
+                                          {ownerBadgeLabel}
+                                        </span>
+                                        <span className="text-slate-400">➔</span>
+                                        {children.length === 0 ? (
+                                          <span className="text-slate-500 italic">
+                                            Henüz yapılacak adım eklenmedi
+                                          </span>
+                                        ) : (
+                                          <span className="text-emerald-300 font-semibold truncate">
+                                            {children
+                                              .map(
+                                                (c, i) =>
+                                                  `${i + 1}) ${
+                                                    getBlockDefinition(c.type)?.label || c.type
+                                                  }`
+                                              )
+                                              .join('   ➔   ')}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {isSelected && (
+                                        <span className="text-[11px] font-bold text-[#68B6FF] shrink-0">
+                                          ● Aktif Seçili Kural (Sol katalogdan eklenen bloklar buraya gelir)
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Expanded Step-by-Step Children Action Blocks */}
+                                    {!isCollapsed && (
+                                      <div className="p-4 pl-6 space-y-2.5 relative">
+                                        <div className="absolute left-3 top-3 bottom-3 w-1 bg-[#2B3242] rounded-full" />
+
+                                        {children.length === 0 ? (
+                                          <div className="py-3 px-4 rounded-xl border border-dashed border-[#2B3242] text-xs text-slate-400">
+                                            Aşağıdaki <strong>+ Hızlı Aksiyon</strong> menüsünden veya sol kütüphaneden yapılacak işlemi ekleyin.
+                                          </div>
+                                        ) : (
+                                          children.map((child, idx) => {
+                                            const childDef = getBlockDefinition(child.type);
+                                            const childColor = childDef
+                                              ? BLOCK_CATEGORY_META[childDef.category]?.color ||
+                                                '#478CBF'
+                                              : '#478CBF';
+                                            const isContainer = Boolean(childDef?.isContainer);
+                                            const isNestedTarget =
+                                              selectedNestedParentId === child.id;
+                                            const subChildren = child.children || [];
+
+                                            return (
+                                              <div key={child.id} className="space-y-2">
+                                                <div
+                                                  className={`relative flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-xl bg-[#11141A] border transition-colors ${
+                                                    isNestedTarget
+                                                      ? 'border-amber-400 ring-1 ring-amber-400/30'
+                                                      : 'border-[#2B3242] hover:border-slate-600'
+                                                  }`}
+                                                  style={{
+                                                    borderLeftWidth: '5px',
+                                                    borderLeftColor: childColor,
+                                                  }}
+                                                >
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="text-[11px] font-extrabold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                                                      ADIM {idx + 1} ➔
+                                                    </span>
+                                                    <span className="text-xs font-bold text-slate-100">
+                                                      {childDef?.label || child.type}
+                                                    </span>
+
+                                                    {/* Target selector for action block */}
+                                                    <div
+                                                      className="flex items-center gap-1 bg-[#181C24] px-2 py-0.5 rounded border border-[#2B3242]"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      <span className="text-[10px] text-slate-400">
+                                                        Hedef:
+                                                      </span>
+                                                      <select
+                                                        value={child.targetObjectId}
+                                                        onChange={(e) =>
+                                                          handleUpdateBlockTarget(
+                                                            eventBlock.id,
+                                                            child.id,
+                                                            e.target.value
+                                                          )
+                                                        }
+                                                        className="bg-transparent text-xs font-semibold text-[#68B6FF] focus:outline-none"
+                                                      >
+                                                        <option value="scene" className="bg-[#11141A]">
+                                                          🌍 Sahne
+                                                        </option>
+                                                        {scene.objects.map((o) => (
+                                                          <option
+                                                            key={o.id}
+                                                            value={o.id}
+                                                            className="bg-[#11141A]"
+                                                          >
+                                                            🎯 {o.name}
+                                                          </option>
+                                                        ))}
+                                                      </select>
+                                                    </div>
+
+                                                    {childDef?.params.map((param) => (
+                                                      <div
+                                                        key={param.name}
+                                                        className="flex items-center gap-1.5 bg-[#181C24] px-2 py-0.5 rounded-lg border border-[#2B3242]"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                      >
+                                                        <span className="text-xs font-medium text-slate-300">
+                                                          {param.label}:
+                                                        </span>
+                                                        {renderParamInput(
+                                                          eventBlock.id,
+                                                          child.id,
+                                                          param,
+                                                          child.params[param.name]
+                                                        )}
+                                                      </div>
+                                                    ))}
+                                                  </div>
+
+                                                  <div className="flex items-center gap-0.5">
+                                                    {isContainer && (
+                                                      <button
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setSelectedEventId(eventBlock.id);
+                                                          setSelectedNestedParentId(
+                                                            isNestedTarget ? null : child.id
+                                                          );
+                                                        }}
+                                                        className={`px-2 py-0.5 rounded text-xs font-semibold border transition-colors mr-1 ${
+                                                          isNestedTarget
+                                                            ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                                            : 'bg-slate-800 text-amber-300 border-slate-700 hover:border-amber-400'
+                                                        }`}
+                                                      >
+                                                        {isNestedTarget
+                                                          ? 'İçine Ekleniyor'
+                                                          : '+ İçine Blok'}
+                                                      </button>
+                                                    )}
+                                                    <button
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleMoveActionBlock(
+                                                          eventBlock.id,
+                                                          idx,
+                                                          -1
+                                                        );
+                                                      }}
+                                                      disabled={idx === 0}
+                                                      className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800"
+                                                      title="Yukarı Taşı"
+                                                    >
+                                                      <ChevronUp className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleMoveActionBlock(
+                                                          eventBlock.id,
+                                                          idx,
+                                                          1
+                                                        );
+                                                      }}
+                                                      disabled={idx === children.length - 1}
+                                                      className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800"
+                                                      title="Aşağı Taşı"
+                                                    >
+                                                      <ChevronDown className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDuplicateBlock(
+                                                          eventBlock.id,
+                                                          child.id
+                                                        );
+                                                      }}
+                                                      className="p-1 text-slate-400 hover:text-[#68B6FF] rounded hover:bg-slate-800"
+                                                      title="Adımı Çoğalt"
+                                                    >
+                                                      <Copy className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDeleteBlock(eventBlock.id, child.id);
+                                                      }}
+                                                      className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-rose-500/10"
+                                                      title="Adımı Sil"
+                                                    >
+                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  </div>
+                                                </div>
+
+                                                {(isContainer || subChildren.length > 0) && (
+                                                  <div className="ml-6 pl-3 border-l-2 border-amber-500/40 space-y-2">
+                                                    {subChildren.map((sub, sIdx) => {
+                                                      const subDef = getBlockDefinition(sub.type);
+                                                      const subColor = subDef
+                                                        ? BLOCK_CATEGORY_META[subDef.category]
+                                                            ?.color || '#10B981'
+                                                        : '#10B981';
+                                                      return (
+                                                        <div
+                                                          key={sub.id}
+                                                          className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#11141A] border border-[#2B3242]"
+                                                          style={{
+                                                            borderLeftWidth: '4px',
+                                                            borderLeftColor: subColor,
+                                                          }}
+                                                        >
+                                                          <div className="flex flex-wrap items-center gap-2">
+                                                            <span className="text-[11px] font-mono text-amber-300">
+                                                              ↳ Alt Adım {sIdx + 1}
+                                                            </span>
+                                                            <span className="text-xs font-semibold text-slate-100">
+                                                              {subDef?.label || sub.type}
+                                                            </span>
+                                                            {subDef?.params.map((param) => (
+                                                              <div
+                                                                key={param.name}
+                                                                className="flex items-center gap-1.5"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                              >
+                                                                <span className="text-xs text-slate-400">
+                                                                  {param.label}:
+                                                                </span>
+                                                                {renderParamInput(
+                                                                  eventBlock.id,
+                                                                  sub.id,
+                                                                  param,
+                                                                  sub.params[param.name],
+                                                                  child.id
+                                                                )}
+                                                              </div>
+                                                            ))}
+                                                          </div>
+                                                          <button
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              handleDeleteBlock(
+                                                                eventBlock.id,
+                                                                sub.id,
+                                                                child.id
+                                                              );
+                                                            }}
+                                                            className="p-1 text-slate-400 hover:text-rose-400"
+                                                            title="Alt Bloğu Sil"
+                                                          >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                          </button>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Inline Quick-Add Action Bar inside every Event Card (when expanded) */}
+                                  {!isCollapsed && (
+                                    <div
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="px-4 py-2.5 bg-[#11141A]/90 rounded-b-2xl border-t border-[#2B3242] flex flex-wrap items-center justify-between gap-2"
+                                    >
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[11px] font-semibold text-slate-400">
+                                          + Bu Kurala Adım Ekle:
+                                        </span>
+                                        {QUICK_ACTION_TYPES.slice(0, 5).map((qa) => (
+                                          <button
+                                            key={qa.type}
+                                            onClick={() => {
+                                              const def = getBlockDefinition(qa.type);
+                                              if (def)
+                                                handleAddBlockFromCatalog(def, eventBlock.id);
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-[#1D2331] hover:bg-[#478CBF] text-[11px] font-medium text-slate-200 border border-[#2B3242] transition-colors"
+                                          >
+                                            + {qa.label.split(' (')[0]}
+                                          </button>
+                                        ))}
+                                      </div>
+
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <select
+                                          defaultValue=""
+                                          onChange={(e) => {
+                                            const val = e.target.value as BlockType;
+                                            if (!val) return;
+                                            const def = getBlockDefinition(val);
+                                            if (def) handleAddBlockFromCatalog(def, eventBlock.id);
+                                            e.target.value = '';
+                                          }}
+                                          className="bg-[#181C24] border border-[#2B3242] rounded-lg px-2.5 py-1 text-xs font-semibold text-[#68B6FF] focus:outline-none"
+                                        >
+                                          <option value="">+ Tüm Aksiyonlardan Seç...</option>
+                                          {BLOCK_CATALOG.filter((b) => !b.isHat).map((b) => (
+                                            <option key={b.type} value={b.type}>
+                                              {b.label}
                                             </option>
                                           ))}
                                         </select>
                                       </div>
-
-                                      {childDef?.params.map((param) => (
-                                        <div
-                                          key={param.name}
-                                          className="flex items-center gap-1.5 bg-[#181C24] px-2 py-0.5 rounded-lg border border-[#2B3242]"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          <span className="text-xs font-medium text-slate-300">
-                                            {param.label}:
-                                          </span>
-                                          {renderParamInput(
-                                            eventBlock.id,
-                                            child.id,
-                                            param,
-                                            child.params[param.name]
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-
-                                    <div className="flex items-center gap-0.5">
-                                      {isContainer && (
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedEventId(eventBlock.id);
-                                            setSelectedNestedParentId(
-                                              isNestedTarget ? null : child.id
-                                            );
-                                          }}
-                                          className={`px-2 py-0.5 rounded text-xs font-semibold border transition-colors mr-1 ${
-                                            isNestedTarget
-                                              ? 'bg-amber-500 text-slate-950 border-amber-400'
-                                              : 'bg-slate-800 text-amber-300 border-slate-700 hover:border-amber-400'
-                                          }`}
-                                        >
-                                          {isNestedTarget ? 'İçine Ekleniyor' : '+ İçine Blok'}
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleMoveActionBlock(eventBlock.id, idx, -1);
-                                        }}
-                                        disabled={idx === 0}
-                                        className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800"
-                                        title="Yukarı Taşı"
-                                      >
-                                        <ChevronUp className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleMoveActionBlock(eventBlock.id, idx, 1);
-                                        }}
-                                        disabled={idx === children.length - 1}
-                                        className="p-1 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800"
-                                        title="Aşağı Taşı"
-                                      >
-                                        <ChevronDown className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDuplicateBlock(eventBlock.id, child.id);
-                                        }}
-                                        className="p-1 text-slate-400 hover:text-[#68B6FF] rounded hover:bg-slate-800"
-                                        title="Bloğu Çoğalt"
-                                      >
-                                        <Copy className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteBlock(eventBlock.id, child.id);
-                                        }}
-                                        className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-rose-500/10"
-                                        title="Bloğu Sil"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {(isContainer || subChildren.length > 0) && (
-                                    <div className="ml-6 pl-3 border-l-2 border-amber-500/40 space-y-2">
-                                      {subChildren.map((sub, sIdx) => {
-                                        const subDef = getBlockDefinition(sub.type);
-                                        const subColor = subDef
-                                          ? BLOCK_CATEGORY_META[subDef.category]?.color || '#10B981'
-                                          : '#10B981';
-                                        return (
-                                          <div
-                                            key={sub.id}
-                                            className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#11141A] border border-[#2B3242]"
-                                            style={{
-                                              borderLeftWidth: '4px',
-                                              borderLeftColor: subColor,
-                                            }}
-                                          >
-                                            <div className="flex flex-wrap items-center gap-2">
-                                              <span className="text-[11px] font-mono text-amber-300">
-                                                ↳ {sIdx + 1}
-                                              </span>
-                                              <span className="text-xs font-semibold text-slate-100">
-                                                {subDef?.label || sub.type}
-                                              </span>
-                                              {subDef?.params.map((param) => (
-                                                <div
-                                                  key={param.name}
-                                                  className="flex items-center gap-1.5"
-                                                  onClick={(e) => e.stopPropagation()}
-                                                >
-                                                  <span className="text-xs text-slate-400">
-                                                    {param.label}:
-                                                  </span>
-                                                  {renderParamInput(
-                                                    eventBlock.id,
-                                                    sub.id,
-                                                    param,
-                                                    sub.params[param.name],
-                                                    child.id
-                                                  )}
-                                                </div>
-                                              ))}
-                                            </div>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleDeleteBlock(eventBlock.id, sub.id, child.id);
-                                              }}
-                                              className="p-1 text-slate-400 hover:text-rose-400"
-                                              title="Alt Bloğu Sil"
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                          </div>
-                                        );
-                                      })}
                                     </div>
                                   )}
                                 </div>
                               );
-                            })
-                          )}
+                            })}
+                          </div>
                         </div>
-                      </div>
-
-                      {/* Inline Quick-Add Action Bar inside every Event Card */}
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="px-4 py-2.5 bg-[#11141A]/90 rounded-b-2xl border-t border-[#2B3242] flex flex-wrap items-center justify-between gap-2"
-                      >
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[11px] font-semibold text-slate-400">
-                            + Hızlı Aksiyon:
-                          </span>
-                          {QUICK_ACTION_TYPES.slice(0, 5).map((qa) => (
-                            <button
-                              key={qa.type}
-                              onClick={() => {
-                                const def = getBlockDefinition(qa.type);
-                                if (def) handleAddBlockFromCatalog(def, eventBlock.id);
-                              }}
-                              className="px-2 py-0.5 rounded bg-[#1D2331] hover:bg-[#478CBF] text-[11px] font-medium text-slate-200 border border-[#2B3242] transition-colors"
-                            >
-                              + {qa.label.split(' (')[0]}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <select
-                            defaultValue=""
-                            onChange={(e) => {
-                              const val = e.target.value as BlockType;
-                              if (!val) return;
-                              const def = getBlockDefinition(val);
-                              if (def) handleAddBlockFromCatalog(def, eventBlock.id);
-                              e.target.value = '';
-                            }}
-                            className="bg-[#181C24] border border-[#2B3242] rounded-lg px-2.5 py-1 text-xs font-semibold text-[#68B6FF] focus:outline-none"
-                          >
-                            <option value="">+ Tüm Aksiyonlardan Ekle...</option>
-                            {BLOCK_CATALOG.filter((b) => !b.isHat).map((b) => (
-                              <option key={b.type} value={b.type}>
-                                {b.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => {
-                              setSelectedEventId(eventBlock.id);
-                              setSelectedNestedParentId(null);
-                              setShowPalettePanel(true);
-                              setIsFocusMode(false);
-                              setIsFullCatalogMode(true);
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-[#478CBF]/25 hover:bg-[#478CBF] text-xs font-bold text-[#68B6FF] hover:text-white border border-[#68B6FF]/50 transition-colors"
-                          >
-                            ⤢ Geniş Katalogdan Seç &amp; Ekle
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+                      );
+                    });
+                  })()
+                )}
+              </div>
             </div>
-          </div>
         </div>
         </div>
 

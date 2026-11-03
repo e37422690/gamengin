@@ -1137,14 +1137,31 @@ export function buildFullParityStandaloneRuntimeScript(project: GameProject): st
       if (cam && cam.followTargetId) {
         const target = objects.find(o => o.id === cam.followTargetId);
         if (target) {
-          const desiredX = target.x + target.width / 2 - cam.width / 2;
-          const desiredY = target.y + target.height / 2 - cam.height / 2;
-          const maxCamX = Math.max(0, cam.boundsWidth - cam.width);
-          const maxCamY = Math.max(0, cam.boundsHeight - cam.height);
+          const camW = cam.width || 960;
+          const camH = cam.height || 540;
+          const maxCamX = Math.max(0, (cam.boundsWidth || 1200) - camW);
+          const maxCamY = Math.max(0, (cam.boundsHeight || 540) - camH);
+          const targetCenterX = target.x + target.width / 2;
+          const viewCenterX = cameraX + camW / 2;
+          const deadzoneX = 28;
+          let desiredX = cameraX;
+          if (targetCenterX > viewCenterX + deadzoneX) desiredX = targetCenterX - deadzoneX - camW / 2;
+          else if (targetCenterX < viewCenterX - deadzoneX) desiredX = targetCenterX + deadzoneX - camW / 2;
+
+          const targetCenterY = target.y + target.height / 2;
+          const viewCenterY = cameraY + camH / 2;
+          const deadzoneY = (activeScene.gravityY || 0) !== 0 ? 96 : 36;
+          let desiredY = cameraY;
+          if (targetCenterY > viewCenterY + deadzoneY) desiredY = targetCenterY - deadzoneY - camH / 2;
+          else if (targetCenterY < viewCenterY - deadzoneY) desiredY = targetCenterY + deadzoneY - camH / 2;
+
           const clampedX = Math.max(cam.boundsX || 0, Math.min(maxCamX, desiredX));
           const clampedY = Math.max(cam.boundsY || 0, Math.min(maxCamY, desiredY));
-          cameraX += (clampedX - cameraX) * (cam.smoothing || 0.15);
-          cameraY += (clampedY - cameraY) * (cam.smoothing || 0.15);
+          const alpha = 1 - Math.pow(1 - Math.min(0.95, Math.max(0.05, cam.smoothing || 0.14)), dt * 60);
+          const diffX = clampedX - cameraX;
+          const diffY = clampedY - cameraY;
+          cameraX = Math.abs(diffX) < 0.65 ? clampedX : cameraX + diffX * alpha;
+          cameraY = Math.abs(diffY) < 0.65 ? clampedY : cameraY + diffY * alpha;
         }
       }
     }

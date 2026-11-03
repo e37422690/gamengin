@@ -1217,6 +1217,69 @@ export function App() {
         </div>
       )}
 
+      {/* Step-by-Step Interactive Beginner Workflow Guide Bar */}
+      <div className="h-8 px-3 bg-[#10141D] border-b border-[#232A3A] flex items-center justify-between gap-2 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-1.5 text-[11px] whitespace-nowrap">
+          <span className="font-extrabold text-amber-400 mr-1">🎓 Adım Adım Rehber:</span>
+          {[
+            {
+              step: '1',
+              title: 'Harita & Engelleri Yerleştir',
+              active: activeTab === 'scene',
+              onClick: () => switchWorkspaceTab('scene'),
+            },
+            {
+              step: '2',
+              title: 'Blok Kodlarını Kur',
+              active: activeTab === 'blocks',
+              onClick: () => switchWorkspaceTab('blocks'),
+            },
+            {
+              step: '3',
+              title: 'Oyunu Canlı Test Et',
+              active: activeTab === 'preview',
+              onClick: () => switchWorkspaceTab('preview'),
+            },
+            {
+              step: '4',
+              title: 'Oyunu İndir & Paylaş',
+              active: false,
+              onClick: () => {
+                setModalInitialTab('export');
+                setModalOpen(true);
+              },
+            },
+          ].map((item, idx) => (
+            <React.Fragment key={item.step}>
+              <button
+                onClick={item.onClick}
+                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-md font-semibold transition-all ${
+                  item.active
+                    ? 'bg-[#478CBF] text-white shadow-xs'
+                    : 'bg-[#181C24] text-slate-300 hover:text-white border border-[#2B3242]'
+                }`}
+              >
+                <span
+                  className={`w-4 h-4 rounded-full text-[10px] font-extrabold flex items-center justify-center ${
+                    item.active ? 'bg-white text-[#11141A]' : 'bg-[#2B3242] text-[#68B6FF]'
+                  }`}
+                >
+                  {item.step}
+                </span>
+                <span>{item.title}</span>
+              </button>
+              {idx < 3 && <span className="text-slate-600 font-bold">➔</span>}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="hidden xl:flex items-center gap-2 text-[11px] text-slate-400 whitespace-nowrap">
+          <span>
+            💡 İpucu: Haritadaki tüm engelleri ve karoları fareyle tıklayıp sürükleyerek taşıyabilirsiniz.
+          </span>
+        </div>
+      </div>
+
       {/* Main Dockable Workspace Body */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -1234,6 +1297,7 @@ export function App() {
             <BlockWorkspace
               project={project}
               scene={activeScene}
+              focusedObjectId={selectedObjectId}
               onUpdateBlocks={handleUpdateBlocks}
               onUpdateSceneCustomCode={handleUpdateSceneCustomCode}
               onUpdateVariables={handleUpdateVariables}
@@ -1343,6 +1407,9 @@ export function App() {
                       {filteredSceneObjects.map((obj) => {
                         const isSelected = selectedObjectId === obj.id;
                         const badge = getNodeBadgeStyle(obj.role);
+                        const objRuleCount = activeScene.blocks.filter(
+                          (b) => b.targetObjectId === obj.id
+                        ).length;
                         return (
                           <div
                             key={obj.id}
@@ -1359,14 +1426,32 @@ export function App() {
                                 style={{ backgroundColor: obj.color }}
                               />
                               <span className="truncate">{obj.name}</span>
-                              <span
-                                style={{
-                                  color: isSelected ? '#E0F2FE' : badge.color,
-                                }}
-                                className="text-[9px] font-mono opacity-85 hidden xl:inline shrink-0"
-                              >
-                                {badge.text}
-                              </span>
+                              {objRuleCount > 0 ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedObjectId(obj.id);
+                                    switchWorkspaceTab('blocks');
+                                  }}
+                                  title="Bu nesnenin blok kodlarına git"
+                                  className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 ${
+                                    isSelected
+                                      ? 'bg-white text-[#11141A]'
+                                      : 'bg-sky-500/20 text-sky-300 border border-sky-500/40 hover:bg-sky-500/35'
+                                  }`}
+                                >
+                                  🧩 {objRuleCount} Kod
+                                </button>
+                              ) : (
+                                <span
+                                  style={{
+                                    color: isSelected ? '#E0F2FE' : badge.color,
+                                  }}
+                                  className="text-[9px] font-mono opacity-85 hidden xl:inline shrink-0"
+                                >
+                                  {badge.text}
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-1 opacity-85 shrink-0">
                               <button
@@ -1707,14 +1792,22 @@ export function App() {
                   </div>
                 ) : selectedObject ? (
                   <div className="p-4 space-y-4">
-                    {/* Godot Node Class Header */}
-                    <div className="px-3 py-2 rounded-lg bg-[#11141A] border border-[#2B3242] flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#68B6FF] font-mono">
+                    {/* Godot Node Class Header + Direct Jump to Object Code */}
+                    <div className="px-3 py-2 rounded-lg bg-[#11141A] border border-[#2B3242] flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-[#68B6FF] font-mono truncate">
                         {getGodotNodeClassForRole(selectedObject.role)}
                       </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        ID: {selectedObject.id.slice(0, 10)}
-                      </span>
+                      <button
+                        onClick={() => switchWorkspaceTab('blocks')}
+                        className="px-2.5 py-1 rounded-md bg-[#478CBF]/25 hover:bg-[#478CBF] text-[11px] font-bold text-[#68B6FF] hover:text-white border border-[#68B6FF]/50 transition-colors shrink-0"
+                      >
+                        🧩 Bu Nesnenin Koduna Git (
+                        {
+                          activeScene.blocks.filter((b) => b.targetObjectId === selectedObject.id)
+                            .length
+                        }{' '}
+                        Kural)
+                      </button>
                     </div>
 
                     <div className="space-y-3">

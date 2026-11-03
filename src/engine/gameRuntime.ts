@@ -161,6 +161,24 @@ export class GameRuntimeEngine {
       };
     });
 
+    this.shakeTimer = 0;
+    this.shakeIntensity = 0;
+    const cam = this.activeScene.camera;
+    const initTarget =
+      (cam.followTargetId && this.objects.find((o) => o.id === cam.followTargetId)) ||
+      this.objects.find((o) => o.role === 'player');
+    if (initTarget) {
+      const maxCamX = Math.max(0, (cam.boundsWidth || 1200) - (cam.width || 960));
+      const maxCamY = Math.max(0, (cam.boundsHeight || 540) - (cam.height || 540));
+      const desiredX = initTarget.x + initTarget.width / 2 - (cam.width || 960) / 2;
+      const desiredY = initTarget.y + initTarget.height / 2 - (cam.height || 540) / 2;
+      this.cameraX = Math.round(Math.max(cam.boundsX || 0, Math.min(maxCamX, desiredX)));
+      this.cameraY = Math.round(Math.max(cam.boundsY || 0, Math.min(maxCamY, desiredY)));
+    } else {
+      this.cameraX = 0;
+      this.cameraY = 0;
+    }
+
     for (const rule of this.rules) {
       if (
         (isInitial && rule.eventType === 'event_game_start') ||
@@ -1137,9 +1155,11 @@ export class GameRuntimeEngine {
           if (obj.physics.velocityX > 0) {
             obj.x = wall.x - obj.width;
             obj.touchingWallDir = 1;
+            if (obj.role === 'enemy') obj.patrolDir = -1;
           } else if (obj.physics.velocityX < 0) {
             obj.x = wall.x + wall.width;
             obj.touchingWallDir = -1;
+            if (obj.role === 'enemy') obj.patrolDir = 1;
           }
           obj.physics.velocityX = 0;
           if (wall.role === 'invisible_wall') {
@@ -1373,14 +1393,42 @@ export class GameRuntimeEngine {
     if (cam.followTargetId) {
       const target = this.objects.find((o) => o.id === cam.followTargetId);
       if (target) {
-        const desiredX = target.x + target.width / 2 - cam.width / 2;
-        const desiredY = target.y + target.height / 2 - cam.height / 2;
-        const maxCamX = Math.max(0, cam.boundsWidth - cam.width);
-        const maxCamY = Math.max(0, cam.boundsHeight - cam.height);
-        const clampedX = Math.max(cam.boundsX, Math.min(maxCamX, desiredX));
-        const clampedY = Math.max(cam.boundsY, Math.min(maxCamY, desiredY));
-        this.cameraX += (clampedX - this.cameraX) * (cam.smoothing || 0.15);
-        this.cameraY += (clampedY - this.cameraY) * (cam.smoothing || 0.15);
+        const camW = cam.width || 960;
+        const camH = cam.height || 540;
+        const maxCamX = Math.max(0, (cam.boundsWidth || 1200) - camW);
+        const maxCamY = Math.max(0, (cam.boundsHeight || 540) - camH);
+
+        // Horizontal camera deadzone (±28px) so micro-steps do not jitter the map
+        const targetCenterX = target.x + target.width / 2;
+        const viewCenterX = this.cameraX + camW / 2;
+        const deadzoneX = 28;
+        let desiredX = this.cameraX;
+        if (targetCenterX > viewCenterX + deadzoneX) {
+          desiredX = targetCenterX - deadzoneX - camW / 2;
+        } else if (targetCenterX < viewCenterX - deadzoneX) {
+          desiredX = targetCenterX + deadzoneX - camW / 2;
+        }
+
+        // Vertical platformer deadzone (±96px) so normal jumps never shake the map up/down
+        const targetCenterY = target.y + target.height / 2;
+        const viewCenterY = this.cameraY + camH / 2;
+        const deadzoneY = this.activeScene.gravityY !== 0 ? 96 : 36;
+        let desiredY = this.cameraY;
+        if (targetCenterY > viewCenterY + deadzoneY) {
+          desiredY = targetCenterY - deadzoneY - camH / 2;
+        } else if (targetCenterY < viewCenterY - deadzoneY) {
+          desiredY = targetCenterY + deadzoneY - camH / 2;
+        }
+
+        const clampedX = Math.max(cam.boundsX || 0, Math.min(maxCamX, desiredX));
+        const clampedY = Math.max(cam.boundsY || 0, Math.min(maxCamY, desiredY));
+
+        const alpha = 1 - Math.pow(1 - Math.min(0.95, Math.max(0.05, cam.smoothing || 0.14)), dt * 60);
+        const diffX = clampedX - this.cameraX;
+        const diffY = clampedY - this.cameraY;
+
+        this.cameraX = Math.abs(diffX) < 0.65 ? clampedX : this.cameraX + diffX * alpha;
+        this.cameraY = Math.abs(diffY) < 0.65 ? clampedY : this.cameraY + diffY * alpha;
       }
     }
 

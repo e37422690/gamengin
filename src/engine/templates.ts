@@ -201,13 +201,13 @@ export function createProjectFromTemplate(
     coin3.id = 'obj_coin_3';
     coin3.name = 'Altın_3';
 
-    const enemy = createDefaultObject('enemy', 576, 312, 'layer_main', 1);
+    const enemy = createDefaultObject('enemy', 640, 312, 'layer_main', 1);
     enemy.id = 'obj_slime_1';
     enemy.name = 'Koruyucu_Boss_Slime';
     enemy.hp = 90;
     enemy.maxHp = 90;
-    enemy.patrolDistance = 120;
-    enemy.patrolSpeed = 90;
+    enemy.patrolDistance = 75;
+    enemy.patrolSpeed = 85;
 
     const movingPlat = createDefaultObject('moving_platform', 340, 224, 'layer_main', 1);
     movingPlat.id = 'obj_moving_plat_1';
@@ -274,7 +274,7 @@ export function createProjectFromTemplate(
         boundsX: 0,
         boundsY: 0,
         boundsWidth: 1200,
-        boundsHeight: 600,
+        boundsHeight: 540,
       },
       layers: createBaseLayers(),
       tilemapCells: [
@@ -330,7 +330,7 @@ export function createProjectFromTemplate(
               id: 'blk_patrol_init',
               type: 'adv_enemy_patrol',
               targetObjectId: enemy.id,
-              params: { range: 110, speed: 90 },
+              params: { range: 75, speed: 85 },
             },
           ],
         },
@@ -579,7 +579,7 @@ export function createProjectFromTemplate(
         boundsX: 0,
         boundsY: 0,
         boundsWidth: 1200,
-        boundsHeight: 600,
+        boundsHeight: 540,
       },
       layers: createBaseLayers(),
       objects: [scene2Ground, scene2Goal, scene2Hero],

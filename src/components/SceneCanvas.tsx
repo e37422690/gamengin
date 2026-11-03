@@ -109,6 +109,13 @@ type DragInteraction =
   | {
       kind: 'tile_paint';
       mode: 'paint' | 'erase';
+    }
+  | {
+      kind: 'tile_move';
+      startCol: number;
+      startRow: number;
+      origCluster: TileMapCell[];
+      baseOtherCells: TileMapCell[];
     };
 
 export const SceneCanvas: React.FC<SceneCanvasProps> = ({
@@ -143,6 +150,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
   const [dragState, setDragState] = useState<DragInteraction | null>(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [activeTileBrush, setActiveTileBrush] = useState<TileBrushKind>('grass_ground');
+  const [selectedTileCluster, setSelectedTileCluster] = useState<TileMapCell[] | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -150,6 +158,22 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
     worldY: number;
     objectId: string | null;
   } | null>(null);
+
+  // Clear tile selection when a GameObject is selected
+  useEffect(() => {
+    if (selectedObjectId) {
+      setSelectedTileCluster(null);
+    }
+  }, [selectedObjectId]);
+
+  const handleDeleteSelectedTileCluster = useCallback(() => {
+    if (!selectedTileCluster || selectedTileCluster.length === 0 || !onUpdateTileMapCells) return;
+    const remaining = (scene.tilemapCells || []).filter(
+      (c) => !selectedTileCluster.some((sel) => sel.col === c.col && sel.row === c.row)
+    );
+    onUpdateTileMapCells(remaining, 'Karo Engeli Silindi');
+    setSelectedTileCluster(null);
+  }, [selectedTileCluster, scene.tilemapCells, onUpdateTileMapCells]);
 
   // ResizeObserver for crisp HiDPI canvas
   useEffect(() => {
@@ -167,7 +191,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Spacebar hand pan shortcut
+  // Spacebar hand pan shortcut & Delete key for selected TileMap obstacle
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
@@ -178,6 +202,10 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
         return;
       }
       if (e.code === 'Space') setIsSpacePressed(true);
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTileCluster && selectedTileCluster.length > 0) {
+        e.preventDefault();
+        handleDeleteSelectedTileCluster();
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') setIsSpacePressed(false);
@@ -188,7 +216,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [selectedTileCluster, handleDeleteSelectedTileCluster]);
 
   const sortedObjects = sortSceneObjectsForRender(scene.objects, scene.layers);
 
@@ -290,6 +318,37 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
 
     // Draw TileMapLayer cells (shared renderer)
     drawTileMapCellsOnCanvas(ctx, scene.tilemapCells, scene.gridSize);
+
+    // Draw selection outline around selected TileMap obstacle cluster
+    if (selectedTileCluster && selectedTileCluster.length > 0) {
+      const g = Math.max(16, scene.gridSize || 32);
+      const minCol = Math.min(...selectedTileCluster.map((c) => c.col));
+      const maxCol = Math.max(...selectedTileCluster.map((c) => c.col));
+      const minRow = Math.min(...selectedTileCluster.map((c) => c.row));
+      const maxRow = Math.max(...selectedTileCluster.map((c) => c.row));
+      const bx = minCol * g;
+      const by = minRow * g;
+      const bw = (maxCol - minCol + 1) * g;
+      const bh = (maxRow - minRow + 1) * g;
+
+      ctx.save();
+      ctx.strokeStyle = '#38BDF8';
+      ctx.lineWidth = 2.5 / viewport.zoom;
+      ctx.setLineDash([6 / viewport.zoom, 3 / viewport.zoom]);
+      ctx.strokeRect(bx - 2, by - 2, bw + 4, bh + 4);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.fillRect(bx, by - 22, Math.max(bw, 210), 18);
+      ctx.fillStyle = '#38BDF8';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(
+        `🧱 Karo Engeli (${selectedTileCluster.length} Karo) — Sürükle Taşı / Del Sil`,
+        bx + 5,
+        by - 9
+      );
+      ctx.restore();
+    }
 
     // Draw hover ghost tile if in TileMap brush or erase mode
     if (toolMode === 'tile_paint' || toolMode === 'tile_erase') {
@@ -468,6 +527,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
     scene,
     sortedObjects,
     selectedObjectId,
+    selectedTileCluster,
     viewport,
     showGrid,
     showCollisionBoxes,
@@ -517,11 +577,12 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
       for (let i = sortedObjects.length - 1; i >= 0; i--) {
         const obj = sortedObjects[i];
         if (!obj.visible) continue;
+        const pad = obj.width <= 48 || obj.height <= 36 ? 6 : 0;
         if (
-          pt.x >= obj.x &&
-          pt.x <= obj.x + obj.width &&
-          pt.y >= obj.y &&
-          pt.y <= obj.y + obj.height
+          pt.x >= obj.x - pad &&
+          pt.x <= obj.x + obj.width + pad &&
+          pt.y >= obj.y - pad &&
+          pt.y <= obj.y + obj.height + pad
         ) {
           hitObjId = obj.id;
           break;
@@ -577,32 +638,95 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
       scene.layers.map((l) => [l.id, l])
     );
 
+    // Collect all hit objects with +6px padding for small/thin obstacles, then pick the most specific foreground object
+    const hitCandidates: GameObject[] = [];
     for (let i = sortedObjects.length - 1; i >= 0; i--) {
       const obj = sortedObjects[i];
       const layer = layerMap.get(obj.layerId);
-      if ((layer && (!layer.visible || layer.locked)) || !obj.visible || obj.locked) {
+      if ((layer && !layer.visible) || !obj.visible) {
         continue;
       }
+      const pad = obj.width <= 48 || obj.height <= 36 ? 6 : 0;
       if (
-        pt.x >= obj.x &&
-        pt.x <= obj.x + obj.width &&
-        pt.y >= obj.y &&
-        pt.y <= obj.y + obj.height
+        pt.x >= obj.x - pad &&
+        pt.x <= obj.x + obj.width + pad &&
+        pt.y >= obj.y - pad &&
+        pt.y <= obj.y + obj.height + pad
       ) {
-        onSelectObject(obj.id);
-        onCommitUndoSnapshot?.(`Taşı: ${obj.name}`);
-        setDragState({
-          kind: 'move',
-          objectId: obj.id,
-          startWorldX: pt.x,
-          startWorldY: pt.y,
-          origX: obj.x,
-          origY: obj.y,
-        });
-        return;
+        hitCandidates.push(obj);
       }
     }
 
+    if (hitCandidates.length > 0) {
+      // Prioritize interactive/smaller obstacles over background lights or wide platforms
+      hitCandidates.sort((a, b) => {
+        if (a.role === 'light_source' && b.role !== 'light_source') return 1;
+        if (b.role === 'light_source' && a.role !== 'light_source') return -1;
+        const areaA = a.width * a.height;
+        const areaB = b.width * b.height;
+        if (Math.abs(areaA - areaB) > 2500) return areaA - areaB;
+        return 0;
+      });
+      const chosen = hitCandidates[0];
+      setSelectedTileCluster(null);
+      onSelectObject(chosen.id);
+      const layer = layerMap.get(chosen.layerId);
+      if (!chosen.locked && (!layer || !layer.locked)) {
+        onCommitUndoSnapshot?.(`Taşı: ${chosen.name}`);
+        setDragState({
+          kind: 'move',
+          objectId: chosen.id,
+          startWorldX: pt.x,
+          startWorldY: pt.y,
+          origX: chosen.x,
+          origY: chosen.y,
+        });
+      }
+      return;
+    }
+
+    // If no GameObject was hit, check if user clicked a TileMapCell obstacle (wood_bridge, crystal_block, stone_wall, etc.)!
+    const g = Math.max(16, scene.gridSize || 32);
+    const clickCol = Math.floor(pt.x / g);
+    const clickRow = Math.floor(pt.y / g);
+    const allCells = scene.tilemapCells || [];
+    const hitCell = allCells.find((c) => c.col === clickCol && c.row === clickRow);
+    if (hitCell && onUpdateTileMapCells) {
+      // Select connected horizontal row cluster (or single cell if Alt key is held)
+      const cluster: TileMapCell[] = [hitCell];
+      if (!e.altKey) {
+        let leftCol = clickCol - 1;
+        while (true) {
+          const leftNeighbor = allCells.find((c) => c.row === clickRow && c.col === leftCol);
+          if (!leftNeighbor) break;
+          cluster.push(leftNeighbor);
+          leftCol--;
+        }
+        let rightCol = clickCol + 1;
+        while (true) {
+          const rightNeighbor = allCells.find((c) => c.row === clickRow && c.col === rightCol);
+          if (!rightNeighbor) break;
+          cluster.push(rightNeighbor);
+          rightCol++;
+        }
+      }
+      onSelectObject(null);
+      setSelectedTileCluster(cluster);
+      onCommitUndoSnapshot?.('Karo Engeli Taşındı');
+      const otherCells = allCells.filter(
+        (c) => !cluster.some((cl) => cl.col === c.col && cl.row === c.row)
+      );
+      setDragState({
+        kind: 'tile_move',
+        startCol: clickCol,
+        startRow: clickRow,
+        origCluster: cluster,
+        baseOtherCells: otherCells,
+      });
+      return;
+    }
+
+    setSelectedTileCluster(null);
     onSelectObject(null);
   };
 
@@ -614,6 +738,26 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
 
     if (dragState.kind === 'tile_paint') {
       applyTileAtWorld(pt.x, pt.y, dragState.mode);
+      return;
+    }
+
+    if (dragState.kind === 'tile_move' && onUpdateTileMapCells) {
+      const g = Math.max(16, scene.gridSize || 32);
+      const curCol = Math.floor(pt.x / g);
+      const curRow = Math.floor(pt.y / g);
+      const dCol = curCol - dragState.startCol;
+      const dRow = curRow - dragState.startRow;
+      const movedCluster = dragState.origCluster
+        .map((c) => ({
+          ...c,
+          col: Math.max(0, c.col + dCol),
+          row: Math.max(0, c.row + dRow),
+        }));
+      setSelectedTileCluster(movedCluster);
+      const filteredBase = dragState.baseOtherCells.filter(
+        (b) => !movedCluster.some((m) => m.col === b.col && m.row === b.row)
+      );
+      onUpdateTileMapCells([...filteredBase, ...movedCluster]);
       return;
     }
 
@@ -816,8 +960,38 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
 
         {/* Right Zoom & Coordinate Readout */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {selectedTileCluster && selectedTileCluster.length > 0 && (
+            <div className="flex items-center gap-1 mr-1">
+              <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-xs font-bold">
+                🧱 Karo Engeli ({selectedTileCluster.length})
+              </span>
+              <button
+                onClick={handleDeleteSelectedTileCluster}
+                title="Seçili Karo Engelini Sil (Del)"
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Engeli Sil</span>
+              </button>
+            </div>
+          )}
+
           {selectedObjectId && (
             <div className="flex items-center gap-1 mr-1">
+              {scene.objects.find((o) => o.id === selectedObjectId)?.locked && (
+                <button
+                  onClick={() =>
+                    onUpdateObject(
+                      selectedObjectId,
+                      (o) => ({ ...o, locked: false }),
+                      'Nesne Kilidi Açıldı'
+                    )
+                  }
+                  className="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40"
+                >
+                  <span>🔓 Kilidi Aç</span>
+                </button>
+              )}
               <button
                 onClick={onDuplicateSelected}
                 title="Seçili Düğümü Çoğalt (Ctrl+D)"

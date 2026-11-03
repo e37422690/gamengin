@@ -51,6 +51,86 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
   const [timeScale, setTimeScale] = useState<number>(1.0);
   const timeScaleRef = useRef<number>(1.0);
   const [showLiveColliders, setShowLiveColliders] = useState<boolean>(false);
+  const showLiveCollidersRef = useRef<boolean>(false);
+
+  const renderSnapshotToCanvas = (snap: RuntimeSnapshot) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const currentScene =
+      project.scenes.find((s) => s.id === snap.sceneId) || project.scenes[0];
+    if (!currentScene) return;
+
+    const targetW = project.settings.resolutionWidth || 960;
+    const targetH = project.settings.resolutionHeight || 540;
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+
+    ctx.fillStyle = currentScene.backgroundColor || '#0F172A';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(-snap.cameraX, -snap.cameraY);
+
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let gx = 0; gx <= 1200; gx += 48) {
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, 720);
+    }
+    for (let gy = 0; gy <= 720; gy += 48) {
+      ctx.moveTo(0, gy);
+      ctx.lineTo(1200, gy);
+    }
+    ctx.stroke();
+
+    drawTileMapCellsOnCanvas(ctx, currentScene.tilemapCells, currentScene.gridSize);
+
+    const showColliders = showLiveCollidersRef.current;
+    for (const obj of snap.objects) {
+      if (!obj.visible && !showColliders) continue;
+      const bobY =
+        obj.activeAnimation === 'move' && Math.abs(obj.physics.velocityX) > 5
+          ? obj.animFrameIndex === 1
+            ? -2
+            : 0
+          : 0;
+      drawGameObjectOnCanvas(ctx, obj, false, showColliders, bobY);
+
+      if (showColliders && (Math.abs(obj.physics.velocityX) > 1 || Math.abs(obj.physics.velocityY) > 1)) {
+        const cx = obj.x + obj.width / 2;
+        const cy = obj.y + obj.height / 2;
+        const vx = obj.physics.velocityX * 0.12;
+        const vy = obj.physics.velocityY * 0.12;
+        ctx.save();
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + vx, cy + vy);
+        ctx.stroke();
+        ctx.fillStyle = '#38BDF8';
+        ctx.beginPath();
+        ctx.arc(cx + vx, cy + vy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    for (const ft of snap.floatingTexts || []) {
+      ctx.font = '800 13px "JetBrains Mono", monospace';
+      ctx.fillStyle = ft.color || '#FBBF24';
+      ctx.textAlign = 'center';
+      ctx.fillText(ft.text, ft.x, ft.y);
+    }
+
+    ctx.restore();
+  };
 
   const handleSetTimeScale = (scale: number) => {
     setTimeScale(scale);
@@ -63,7 +143,9 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
     eng.setPaused(false);
     eng.step(1 / 60);
     eng.setPaused(true);
-    setSnapshot({ ...eng.getSnapshot() });
+    const snap = eng.getSnapshot();
+    renderSnapshotToCanvas(snap);
+    setSnapshot({ ...snap });
   };
 
   // Build live exported HTML blob URL when user switches to parity verification mode
@@ -84,7 +166,7 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
     };
   }, [parityMode, project]);
 
-  // Initialize runtime engine and 60 FPS loop
+  // Initialize runtime engine and 60 FPS direct-canvas loop (zero React layout jitter!)
   useEffect(() => {
     if (parityMode === 'exportedHtml') {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -93,14 +175,27 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
 
     const engine = new GameRuntimeEngine(project, initialSceneId);
     engineRef.current = engine;
-    setSnapshot(engine.getSnapshot());
+    const initSnap = engine.getSnapshot();
+    renderSnapshotToCanvas(initSnap);
+    setSnapshot(initSnap);
 
     let lastTime = performance.now();
+    let lastHudUpdate = 0;
     const loop = (now: number) => {
       const dt = ((now - lastTime) / 1000) * timeScaleRef.current;
       lastTime = now;
       const snap = engine.step(dt);
-      setSnapshot({ ...snap });
+      renderSnapshotToCanvas(snap);
+
+      // Update React HUD state at ~20Hz or immediately on state change to prevent 60Hz DOM reflow jitter
+      if (
+        now - lastHudUpdate >= 48 ||
+        snap.status !== 'playing' ||
+        snap.activeDialogue !== null
+      ) {
+        lastHudUpdate = now;
+        setSnapshot({ ...snap });
+      }
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
@@ -123,11 +218,19 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
         if (!eng) return;
         const curr = eng.getSnapshot();
         eng.setPaused(curr.status === 'playing');
-        setSnapshot({ ...eng.getSnapshot() });
+        const nextSnap = eng.getSnapshot();
+        renderSnapshotToCanvas(nextSnap);
+        setSnapshot({ ...nextSnap });
         return;
       }
       if (e.code === 'KeyR') {
         engineRef.current?.restartCurrentScene();
+        const eng = engineRef.current;
+        if (eng) {
+          const nextSnap = eng.getSnapshot();
+          renderSnapshotToCanvas(nextSnap);
+          setSnapshot({ ...nextSnap });
+        }
         return;
       }
       engineRef.current?.pressKey(e.code);
@@ -143,83 +246,6 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [parityMode]);
-
-  // Render current snapshot onto canvas using sharedRenderer (100% identical to SceneCanvas and Exported HTML)
-  useEffect(() => {
-    if (!snapshot || parityMode === 'exportedHtml') return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const currentScene =
-      project.scenes.find((s) => s.id === snapshot.sceneId) || project.scenes[0];
-    if (!currentScene) return;
-
-    canvas.width = project.settings.resolutionWidth || 960;
-    canvas.height = project.settings.resolutionHeight || 540;
-
-    ctx.fillStyle = currentScene.backgroundColor || '#0F172A';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(-snapshot.cameraX, -snapshot.cameraY);
-
-    // Subtle atmospheric grid reference (identical to buildFullParityStandaloneRuntimeScript)
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.06)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let gx = 0; gx <= 1200; gx += 48) {
-      ctx.moveTo(gx, 0);
-      ctx.lineTo(gx, 720);
-    }
-    for (let gy = 0; gy <= 720; gy += 48) {
-      ctx.moveTo(0, gy);
-      ctx.lineTo(1200, gy);
-    }
-    ctx.stroke();
-
-    drawTileMapCellsOnCanvas(ctx, currentScene.tilemapCells, currentScene.gridSize);
-
-    for (const obj of snapshot.objects) {
-      if (!obj.visible && !showLiveColliders) continue;
-      const bobY =
-        obj.activeAnimation === 'move' && Math.abs(obj.physics.velocityX) > 5
-          ? obj.animFrameIndex === 1
-            ? -3
-            : 0
-          : 0;
-      drawGameObjectOnCanvas(ctx, obj, false, showLiveColliders, bobY);
-
-      if (showLiveColliders && (Math.abs(obj.physics.velocityX) > 1 || Math.abs(obj.physics.velocityY) > 1)) {
-        const cx = obj.x + obj.width / 2;
-        const cy = obj.y + obj.height / 2;
-        const vx = obj.physics.velocityX * 0.12;
-        const vy = obj.physics.velocityY * 0.12;
-        ctx.save();
-        ctx.strokeStyle = '#38BDF8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + vx, cy + vy);
-        ctx.stroke();
-        ctx.fillStyle = '#38BDF8';
-        ctx.beginPath();
-        ctx.arc(cx + vx, cy + vy, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-
-    for (const ft of snapshot.floatingTexts || []) {
-      ctx.font = '800 13px "JetBrains Mono", monospace';
-      ctx.fillStyle = ft.color || '#FBBF24';
-      ctx.textAlign = 'center';
-      ctx.fillText(ft.text, ft.x, ft.y);
-    }
-
-    ctx.restore();
-  }, [snapshot, project, parityMode, showLiveColliders]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -338,7 +364,13 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
 
               {/* Show Live Colliders & Invisible Walls in Runtime */}
               <button
-                onClick={() => setShowLiveColliders((v) => !v)}
+                onClick={() => {
+                  const next = !showLiveColliders;
+                  setShowLiveColliders(next);
+                  showLiveCollidersRef.current = next;
+                  const eng = engineRef.current;
+                  if (eng) renderSnapshotToCanvas(eng.getSnapshot());
+                }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
                   showLiveColliders
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
