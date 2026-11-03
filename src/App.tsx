@@ -35,6 +35,13 @@ import { GamePreviewRuntime } from './components/GamePreviewRuntime';
 import { AssetAndAtlasPanel } from './components/AssetAndAtlasPanel';
 import { CodeAndDocsPanel } from './components/CodeAndDocsPanel';
 import { ProjectAndExportModal } from './components/ProjectAndExportModal';
+import { GameWizardAndPrefabsModal } from './components/GameWizardAndPrefabsModal';
+import {
+  EngineLanguage,
+  UI_TRANSLATIONS,
+  getInitialLanguage,
+  saveLanguagePreference,
+} from './engine/i18n';
 import {
   Play,
   Download,
@@ -72,6 +79,9 @@ import {
   Search,
   Sun,
   Trash2,
+  Wand2,
+  PackagePlus,
+  Globe,
 } from 'lucide-react';
 
 export type EditorWorkspaceTab = 'scene' | 'blocks' | 'assets' | 'code' | 'docs' | 'preview';
@@ -104,8 +114,18 @@ export function App() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalInitialTab, setModalInitialTab] = useState<'templates' | 'export'>('templates');
   const [windowSizeModalOpen, setWindowSizeModalOpen] = useState(false);
+  const [wizardModalOpen, setWizardModalOpen] = useState(false);
+  const [wizardModalInitialTab, setWizardModalInitialTab] = useState<'wizard' | 'prefabs'>('wizard');
+  const [lang, setLang] = useState<EngineLanguage>(() => getInitialLanguage());
+  const t = UI_TRANSLATIONS[lang];
   const [storageQuotaText, setStorageQuotaText] = useState('Yerel DB: ~0.2 MB');
   const [saveIndicator, setSaveIndicator] = useState<'saved' | 'saving'>('saved');
+
+  const handleToggleLanguage = () => {
+    const nextLang: EngineLanguage = lang === 'tr' ? 'en' : 'tr';
+    setLang(nextLang);
+    saveLanguagePreference(nextLang);
+  };
 
   const historyRef = useRef<UndoRedoManager>(new UndoRedoManager(50));
   const leftPanelRef = useRef<HTMLDivElement>(null);
@@ -874,14 +894,14 @@ export function App() {
               onClick={handleUndo}
               disabled={!historyRef.current.canUndo()}
               title={
-                historyRef.current.getCounts().lastUndoLabel
-                  ? `Geri Al: ${historyRef.current.getCounts().lastUndoLabel} (Ctrl+Z veya Tarayıcı Geri Tuşu)`
-                  : 'Geri Al (Ctrl+Z)'
+                historyRef.current.getCounts().lastAction
+                  ? `${t.undo}: ${historyRef.current.getCounts().lastAction} (Ctrl+Z)`
+                  : `${t.undo} (Ctrl+Z)`
               }
               className="flex items-center gap-1 px-2 py-1 text-xs font-bold text-slate-200 hover:bg-[#478CBF] hover:text-white disabled:opacity-35 disabled:hover:bg-transparent rounded transition-colors whitespace-nowrap shrink-0"
             >
               <Undo2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Geri Al</span>
+              <span>{t.undo}</span>
               {historyRef.current.getCounts().undoCount > 0 && (
                 <span className="px-1 py-0.2 rounded bg-black/40 text-[10px] font-mono text-[#68B6FF]">
                   {historyRef.current.getCounts().undoCount}
@@ -891,15 +911,11 @@ export function App() {
             <button
               onClick={handleRedo}
               disabled={!historyRef.current.canRedo()}
-              title={
-                historyRef.current.getCounts().lastRedoLabel
-                  ? `İleri Al: ${historyRef.current.getCounts().lastRedoLabel} (Ctrl+Y)`
-                  : 'İleri Al (Ctrl+Y)'
-              }
+              title={`${t.redo} (Ctrl+Y)`}
               className="flex items-center gap-1 px-2 py-1 text-xs font-bold text-slate-200 hover:bg-[#478CBF] hover:text-white disabled:opacity-35 disabled:hover:bg-transparent rounded transition-colors whitespace-nowrap shrink-0"
             >
               <Redo2 className="w-3.5 h-3.5 shrink-0" />
-              <span>İleri Al</span>
+              <span>{t.redo}</span>
             </button>
           </div>
         </div>
@@ -907,16 +923,16 @@ export function App() {
         {/* Zone 2: Central Workspace Mode Switcher */}
         <nav className="flex items-center bg-[#11141A] p-0.5 rounded-xl border border-[#2B3242] shrink-0">
           {[
-            { id: 'scene', label: '2D Sahne', icon: Box },
+            { id: 'scene', label: t.tabScene, icon: Box },
             {
               id: 'blocks',
-              label: 'Script (Blok)',
+              label: t.tabBlocks,
               icon: Cpu,
               badge: activeScene?.blocks.length,
             },
-            { id: 'assets', label: 'Piksel & Varlık', icon: ImageIcon },
-            { id: 'code', label: 'Motor Kodu', icon: Code2 },
-            { id: 'docs', label: 'Rehber', icon: BookOpen },
+            { id: 'assets', label: t.tabAssets, icon: ImageIcon },
+            { id: 'code', label: t.tabCode, icon: Code2 },
+            { id: 'docs', label: t.tabDocs, icon: BookOpen },
           ].map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -942,8 +958,41 @@ export function App() {
           })}
         </nav>
 
-        {/* Zone 3: Window Dimensions Controller + Templates + Play Test + Export */}
+        {/* Zone 3: Wizard + Prefabs + Language + Window Dimensions + Templates + Play Test + Export */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => {
+              setWizardModalInitialTab('wizard');
+              setWizardModalOpen(true);
+            }}
+            title="4 Adımda Kendi Oyununu Tasarla (Interactive Game Wizard)"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-xs font-bold text-white shadow-sm whitespace-nowrap"
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            <span>{t.wizardBtn}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setWizardModalInitialTab('prefabs');
+              setWizardModalOpen(true);
+            }}
+            title="Hazır Karakter, Boss, Düşman Duvarı ve Mekanik Paketleri Ekle (Smart Prefabs)"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold whitespace-nowrap"
+          >
+            <PackagePlus className="w-3.5 h-3.5" />
+            <span className="hidden xl:inline">{t.prefabsTab}</span>
+          </button>
+
+          <button
+            onClick={handleToggleLanguage}
+            title="Arayüz Dilini Değiştir / Switch Interface Language (TR / EN)"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#11141A] hover:bg-[#202531] text-amber-300 border border-amber-500/40 text-xs font-extrabold whitespace-nowrap"
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>{lang === 'tr' ? '🇹🇷 TR / EN' : '🌍 EN / TR'}</span>
+          </button>
+
           <button
             onClick={() => setWindowSizeModalOpen((v) => !v)}
             title="Tüm Pencere Uzunluk ve Genişliklerini Özelleştir"
@@ -954,8 +1003,7 @@ export function App() {
             }`}
           >
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#68B6FF]" />
-            <span className="hidden 2xl:inline">Pencere Boyutları</span>
-            <span className="hidden xl:inline 2xl:hidden">Boyutlar</span>
+            <span className="hidden 2xl:inline">{t.windowSizesBtn}</span>
           </button>
 
           <button
@@ -966,7 +1014,7 @@ export function App() {
             className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#11141A] hover:bg-[#202531] text-xs font-medium text-slate-300 border border-[#2B3242] whitespace-nowrap"
           >
             <FolderPlus className="w-3.5 h-3.5 text-[#68B6FF]" />
-            <span className="hidden lg:inline">Şablonlar</span>
+            <span className="hidden lg:inline">{t.templatesBtn}</span>
           </button>
 
           <button
@@ -978,7 +1026,7 @@ export function App() {
             }`}
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{activeTab === 'preview' ? 'Test Kapat (F8)' : 'Oyunu Çalıştır (F5)'}</span>
+            <span>{activeTab === 'preview' ? t.stopGameBtn : t.playGameBtn}</span>
           </button>
 
           <button
@@ -989,7 +1037,7 @@ export function App() {
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#478CBF] hover:bg-[#3A78A6] text-xs font-bold text-white shadow-sm whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Dışa Aktar</span>
+            <span className="hidden sm:inline">{t.exportBtn}</span>
           </button>
         </div>
       </header>
@@ -1537,6 +1585,10 @@ export function App() {
                   canUndo={historyRef.current.canUndo()}
                   canRedo={historyRef.current.canRedo()}
                   onCommitUndoSnapshot={handleRecordUndoSnapshot}
+                  onOpenBlocksForObject={(objId) => {
+                    setSelectedObjectId(objId);
+                    switchWorkspaceTab('blocks');
+                  }}
                 />
               </main>
 
@@ -2279,6 +2331,35 @@ export function App() {
                           </div>
                         </div>
                       )}
+
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">
+                          Canlı Parçacık Efekti (GPUParticles2D Preset)
+                        </label>
+                        <select
+                          value={selectedObject.vfx?.particlePreset || 'none'}
+                          onChange={(e) =>
+                            handleUpdateObject(selectedObject.id, (o) => ({
+                              ...o,
+                              vfx: {
+                                lightEnabled: Boolean(o.vfx?.lightEnabled),
+                                lightColor: o.vfx?.lightColor || '#FBBF24',
+                                lightRadius: o.vfx?.lightRadius || 150,
+                                lightIntensity: o.vfx?.lightIntensity || 0.65,
+                                particlePreset: e.target.value as any,
+                              },
+                            }))
+                          }
+                          className="w-full bg-[#11141A] border border-[#2B3242] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-amber-300"
+                        >
+                          <option value="none">Parçacık Yok (None)</option>
+                          <option value="sparkles">✨ Yıldız Parıltıları (Sparkles)</option>
+                          <option value="fire">🔥 Yükselen Alev (Fire)</option>
+                          <option value="aura">🌀 Enerji Aurası (Aura Ring)</option>
+                          <option value="smoke">💨 Duman Bulutu (Smoke)</option>
+                          <option value="rain">🌧️ Enerji Yağmuru (Rain)</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* 2D Physics & Collider Settings */}
@@ -2866,9 +2947,11 @@ export function App() {
                                       frames: [
                                         {
                                           id: `f1_${Date.now()}`,
-                                          label: `${clipName}_1`,
-                                          color: o.color,
-                                          durationMs: 100,
+                                          x: 0,
+                                          y: 0,
+                                          width: o.width,
+                                          height: o.height,
+                                          colorOverride: o.color,
                                           poseOffsetY: -4,
                                           poseScaleX: 1.12,
                                           poseScaleY: 0.9,
@@ -2876,9 +2959,11 @@ export function App() {
                                         },
                                         {
                                           id: `f2_${Date.now()}`,
-                                          label: `${clipName}_2`,
-                                          color: o.secondaryColor || '#38BDF8',
-                                          durationMs: 100,
+                                          x: 0,
+                                          y: 0,
+                                          width: o.width,
+                                          height: o.height,
+                                          colorOverride: o.secondaryColor || '#38BDF8',
                                           poseOffsetY: 0,
                                           poseScaleX: 0.95,
                                           poseScaleY: 1.08,
@@ -3152,6 +3237,39 @@ export function App() {
           setSelectedObjectId(imported.scenes[0].objects[0]?.id || null);
           historyRef.current.clear();
           setActiveTab('scene');
+        }}
+      />
+
+      {/* Interactive 4-Step Game Creation Wizard & Smart Prefab Store Modal */}
+      <GameWizardAndPrefabsModal
+        isOpen={wizardModalOpen}
+        initialMode={wizardModalInitialTab}
+        lang={lang}
+        scene={activeScene}
+        onClose={() => setWizardModalOpen(false)}
+        onApplyWizardProject={(nextProj) => {
+          setProject(nextProj);
+          setActiveSceneId(nextProj.scenes[0].id);
+          setSelectedObjectId(
+            nextProj.scenes[0].objects.find((o) => o.role === 'player')?.id ||
+              nextProj.scenes[0].objects[0]?.id ||
+              null
+          );
+          historyRef.current.clear();
+          setActiveTab('scene');
+        }}
+        onUpdateScene={(nextScene, commitLabel) => {
+          commitProjectUpdate(
+            (prev) => ({
+              ...prev,
+              scenes: prev.scenes.map((sc) => (sc.id === activeScene.id ? nextScene : sc)),
+            }),
+            commitLabel
+          );
+          const lastObj = nextScene.objects[nextScene.objects.length - 1];
+          if (lastObj) {
+            setSelectedObjectId(lastObj.id);
+          }
         }}
       />
     </div>

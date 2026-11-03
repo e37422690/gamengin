@@ -1048,6 +1048,196 @@ export const BlockWorkspace: React.FC<BlockWorkspaceProps> = ({
             )}
           </div>
 
+          {/* 1-Click Ready Block Recipes Bar for Instant Game Mechanics */}
+          <div className="px-5 py-2 bg-[#11151E] border-b border-[#2B3242] flex flex-wrap items-center gap-1.5 shrink-0">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400 mr-1">
+              ⚡ 1-Tık Hazır Kod Tarifleri:
+            </span>
+            {[
+              {
+                label: '🦘 Space ile Çift Zıplama + Ses',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_key_pressed',
+                    targetObjectId: pId,
+                    params: { key: 'Space' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'move_jump',
+                        targetObjectId: pId,
+                        params: { force: 440 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'audio_play_sfx',
+                        targetObjectId: 'scene',
+                        params: { sound: 'jump' },
+                      },
+                    ],
+                  };
+                },
+              },
+              {
+                label: '🔫 E Tuşuyla Lazer Ateşle',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_key_pressed',
+                    targetObjectId: pId,
+                    params: { key: 'KeyE' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'act_shoot_projectile',
+                        targetObjectId: pId,
+                        params: { speed: 620, color: '#38BDF8', damage: 25 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'audio_play_sfx',
+                        targetObjectId: 'scene',
+                        params: { sound: 'laser' },
+                      },
+                    ],
+                  };
+                },
+              },
+              {
+                label: '💨 Shift ile Hızlı Dash',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_key_pressed',
+                    targetObjectId: pId,
+                    params: { key: 'ShiftLeft' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'move_dash',
+                        targetObjectId: pId,
+                        params: { power: 540 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'anim_play',
+                        targetObjectId: pId,
+                        params: { animState: 'dash', restartIfPlaying: true },
+                      },
+                    ],
+                  };
+                },
+              },
+              {
+                label: '🪙 Altın Toplayınca +25 Puan & Yok Et',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_on_collision',
+                    targetObjectId: pId,
+                    params: { withRole: 'collectible' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'ui_add_score',
+                        targetObjectId: 'scene',
+                        params: { points: 25 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'sense_destroy_other',
+                        targetObjectId: 'scene',
+                        params: {},
+                      },
+                      {
+                        id: `act_r3_${Date.now()}`,
+                        type: 'audio_play_sfx',
+                        targetObjectId: 'scene',
+                        params: { sound: 'coin' },
+                      },
+                    ],
+                  };
+                },
+              },
+              {
+                label: '💥 Düşmana Çarpınca Hasar + Kamera Sarsıntısı',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_on_collision',
+                    targetObjectId: pId,
+                    params: { withRole: 'enemy' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'sense_damage_target',
+                        targetObjectId: pId,
+                        params: { amount: -20 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'camera_shake',
+                        targetObjectId: 'scene',
+                        params: { intensity: 8 },
+                      },
+                      {
+                        id: `act_r3_${Date.now()}`,
+                        type: 'audio_play_sfx',
+                        targetObjectId: 'scene',
+                        params: { sound: 'hit' },
+                      },
+                    ],
+                  };
+                },
+              },
+              {
+                label: '🛡️ Harita Sınırından Yaylı Sekme',
+                build: (): BlockInstance => {
+                  const pId = scene.objects.find((o) => o.role === 'player')?.id || 'scene';
+                  return {
+                    id: `ev_recipe_${Date.now()}`,
+                    type: 'event_boundary_hit',
+                    targetObjectId: pId,
+                    params: { edge: 'any' },
+                    children: [
+                      {
+                        id: `act_r1_${Date.now()}`,
+                        type: 'world_set_boundary_action',
+                        targetObjectId: 'scene',
+                        params: { action: 'bounce', bouncePower: 500 },
+                      },
+                      {
+                        id: `act_r2_${Date.now()}`,
+                        type: 'audio_play_sfx',
+                        targetObjectId: 'scene',
+                        params: { sound: 'jump' },
+                      },
+                    ],
+                  };
+                },
+              },
+            ].map((recipe) => (
+              <button
+                key={recipe.label}
+                onClick={() => {
+                  const newEv = recipe.build();
+                  onUpdateBlocks([...scene.blocks, newEv], `Hazır Tarif: ${recipe.label}`);
+                  setSelectedEventId(newEv.id);
+                  setLastAddedToast(`Hazır Tarif Eklendi: ${recipe.label}`);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-600 hover:text-white text-[11px] font-bold text-emerald-300 border border-emerald-500/30 transition-colors"
+              >
+                {recipe.label}
+              </button>
+            ))}
+          </div>
+
           {diagnostics.length > 0 && (
             <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-2 text-xs text-amber-300 shrink-0">
               <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
@@ -1194,6 +1384,30 @@ export const BlockWorkspace: React.FC<BlockWorkspaceProps> = ({
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                        </div>
+
+                        {/* Natural-Language Rule Explanation Strip */}
+                        <div className="px-4 py-1.5 bg-[#0F131B] border-b border-[#232938] text-[11px] text-slate-300 flex items-center gap-2">
+                          <span className="text-indigo-400 font-bold shrink-0">💬 Kural Özeti:</span>
+                          <span className="truncate">
+                            <strong>
+                              {scene.objects.find((o) => o.id === eventBlock.targetObjectId)?.name || 'Sahne'}
+                            </strong>{' '}
+                            üzerinde{' '}
+                            <span className="text-amber-300 font-semibold">
+                              "{eventDef?.label || eventBlock.type}"
+                            </span>{' '}
+                            gerçekleştiğinde →{' '}
+                            {children.length === 0 ? (
+                              <span className="text-slate-500 italic">Henüz aksiyon eklenmedi</span>
+                            ) : (
+                              <span className="text-emerald-300 font-medium">
+                                {children
+                                  .map((c) => getBlockDefinition(c.type)?.label || c.type)
+                                  .join('  ➔  ')}
+                              </span>
+                            )}
+                          </span>
                         </div>
 
                         {/* Children Action Blocks */}

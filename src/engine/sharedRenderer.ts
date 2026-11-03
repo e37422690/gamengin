@@ -211,6 +211,40 @@ export function drawGameObjectOnCanvas(
     ctx.restore();
   }
 
+  // 1b. Dynamic Particle Emitter Preset (sparkles, fire, aura, smoke, rain)
+  if (obj.vfx?.particlePreset && obj.vfx.particlePreset !== 'none') {
+    const preset = obj.vfx.particlePreset;
+    const pColor =
+      obj.vfx.particleColor ||
+      (preset === 'fire'
+        ? '#F97316'
+        : preset === 'aura'
+        ? '#A855F7'
+        : preset === 'smoke'
+        ? '#94A3B8'
+        : preset === 'rain'
+        ? '#38BDF8'
+        : '#FACC15');
+    const tick = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.003;
+    ctx.save();
+    ctx.fillStyle = pColor;
+    ctx.strokeStyle = pColor;
+    for (let i = 0; i < 5; i++) {
+      const angle = tick + (i * Math.PI * 2) / 5;
+      const dist = Math.max(obj.width, obj.height) * 0.58 + Math.sin(tick * 2 + i) * 6;
+      const px = cx + Math.cos(angle) * dist;
+      const py =
+        preset === 'fire' || preset === 'smoke'
+          ? cy - Math.abs(Math.sin(tick + i)) * (obj.height * 0.7)
+          : cy + Math.sin(angle) * dist * 0.65;
+      ctx.globalAlpha = 0.65;
+      ctx.beginPath();
+      ctx.arc(px, py, preset === 'aura' ? 3.5 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   const facingDir: 1 | -1 =
     (obj as any).facingDir ?? obj.physics?.initialFacing ?? 1;
   const flipMode = obj.physics?.flipMode ?? 'horizontal';

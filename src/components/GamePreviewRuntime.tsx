@@ -21,6 +21,9 @@ import {
   Gamepad2,
   MonitorCheck,
   SlidersHorizontal,
+  StepForward,
+  Eye,
+  Gauge,
 } from 'lucide-react';
 
 interface GamePreviewRuntimeProps {
@@ -45,6 +48,23 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
   const [muted, setMuted] = useState(audioSystem.isMuted());
   const [parityMode, setParityMode] = useState<'engine' | 'exportedHtml'>('engine');
   const [exportedHtmlBlobUrl, setExportedHtmlBlobUrl] = useState<string | null>(null);
+  const [timeScale, setTimeScale] = useState<number>(1.0);
+  const timeScaleRef = useRef<number>(1.0);
+  const [showLiveColliders, setShowLiveColliders] = useState<boolean>(false);
+
+  const handleSetTimeScale = (scale: number) => {
+    setTimeScale(scale);
+    timeScaleRef.current = scale;
+  };
+
+  const handleSingleFrameStep = () => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.setPaused(false);
+    eng.step(1 / 60);
+    eng.setPaused(true);
+    setSnapshot({ ...eng.getSnapshot() });
+  };
 
   // Build live exported HTML blob URL when user switches to parity verification mode
   useEffect(() => {
@@ -77,7 +97,7 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
 
     let lastTime = performance.now();
     const loop = (now: number) => {
-      const dt = (now - lastTime) / 1000;
+      const dt = ((now - lastTime) / 1000) * timeScaleRef.current;
       lastTime = now;
       const snap = engine.step(dt);
       setSnapshot({ ...snap });
@@ -162,14 +182,33 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
     drawTileMapCellsOnCanvas(ctx, currentScene.tilemapCells, currentScene.gridSize);
 
     for (const obj of snapshot.objects) {
-      if (!obj.visible) continue;
+      if (!obj.visible && !showLiveColliders) continue;
       const bobY =
         obj.activeAnimation === 'move' && Math.abs(obj.physics.velocityX) > 5
           ? obj.animFrameIndex === 1
             ? -3
             : 0
           : 0;
-      drawGameObjectOnCanvas(ctx, obj, false, false, bobY);
+      drawGameObjectOnCanvas(ctx, obj, false, showLiveColliders, bobY);
+
+      if (showLiveColliders && (Math.abs(obj.physics.velocityX) > 1 || Math.abs(obj.physics.velocityY) > 1)) {
+        const cx = obj.x + obj.width / 2;
+        const cy = obj.y + obj.height / 2;
+        const vx = obj.physics.velocityX * 0.12;
+        const vy = obj.physics.velocityY * 0.12;
+        ctx.save();
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + vx, cy + vy);
+        ctx.stroke();
+        ctx.fillStyle = '#38BDF8';
+        ctx.beginPath();
+        ctx.arc(cx + vx, cy + vy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
 
     for (const ft of snapshot.floatingTexts || []) {
@@ -180,7 +219,7 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
     }
 
     ctx.restore();
-  }, [snapshot, project, parityMode]);
+  }, [snapshot, project, parityMode, showLiveColliders]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -251,13 +290,23 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
                   <span>Duraklat (P)</span>
                 </button>
               ) : (
-                <button
-                  onClick={() => engineRef.current?.setPaused(false)}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>Devam Et</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => engineRef.current?.setPaused(false)}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Devam Et</span>
+                  </button>
+                  <button
+                    onClick={handleSingleFrameStep}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30"
+                    title="Duraklatılmışken fiziği ve animasyonu 1 kare (1/60sn) ileri sar"
+                  >
+                    <StepForward className="w-3.5 h-3.5" />
+                    <span>+1 Kare</span>
+                  </button>
+                </div>
               )}
 
               <button
@@ -266,6 +315,39 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Yeniden Başlat (R)</span>
+              </button>
+
+              {/* Time Scale (Slow-Mo / Fast-Forward) */}
+              <div className="flex items-center gap-0.5 bg-[#0B0F19] px-1.5 py-0.5 rounded-lg border border-slate-800 text-[11px]">
+                <Gauge className="w-3.5 h-3.5 text-cyan-400 mr-1" />
+                {[0.25, 0.5, 1, 2].map((sc) => (
+                  <button
+                    key={sc}
+                    onClick={() => handleSetTimeScale(sc)}
+                    className={`px-1.5 py-0.5 rounded font-mono font-bold transition-colors ${
+                      Math.abs(timeScale - sc) < 0.01
+                        ? 'bg-cyan-600 text-white'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title={`Oyun Zaman Hızı: ${sc}x`}
+                  >
+                    {sc}x
+                  </button>
+                ))}
+              </div>
+
+              {/* Show Live Colliders & Invisible Walls in Runtime */}
+              <button
+                onClick={() => setShowLiveColliders((v) => !v)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                  showLiveColliders
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title="Canlı oyunda görünmez duvarları, çarpışma kutularını (Hitbox) ve hız vektörlerini göster"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Hitbox & Duvarlar</span>
               </button>
 
               <button
@@ -322,6 +404,67 @@ export const GamePreviewRuntime: React.FC<GamePreviewRuntimeProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Live Physics & Character Telemetry Bar */}
+      {parityMode === 'engine' && snapshot && (() => {
+        const playerObj = snapshot.objects.find((o) => o.role === 'player');
+        if (!playerObj) return null;
+        const jMode = playerObj.physics.jumpMode || 'multi_jump';
+        const maxJumps =
+          jMode === 'infinite'
+            ? '∞'
+            : jMode === 'grounded_only'
+            ? '1'
+            : String(playerObj.maxJumps || 2);
+        return (
+          <div className="h-7 px-4 bg-[#0B0F19] border-b border-slate-800/80 flex items-center justify-between text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-nowrap shrink-0">
+            <div className="flex items-center gap-4">
+              <span className="text-indigo-400 font-bold">
+                🎮 {playerObj.name} Telemetri:
+              </span>
+              <span>
+                Konum:{' '}
+                <strong className="text-white">
+                  X:{Math.round(playerObj.x)} Y:{Math.round(playerObj.y)}
+                </strong>
+              </span>
+              <span>
+                Hız (Vel):{' '}
+                <strong className="text-cyan-300">
+                  VX:{Math.round(playerObj.physics.velocityX)} VY:{Math.round(playerObj.physics.velocityY)}
+                </strong>
+              </span>
+              <span>
+                Yön:{' '}
+                <strong className="text-amber-300">
+                  {playerObj.facingDir === -1 ? '◀ SOL (Flipped)' : 'SAĞ ▶'}
+                </strong>
+              </span>
+              <span>
+                Zemin:{' '}
+                <strong className={playerObj.grounded ? 'text-emerald-400' : 'text-rose-400'}>
+                  {playerObj.grounded ? 'YERDE (Grounded)' : 'HAVADA (Airborne)'}
+                </strong>
+              </span>
+              <span>
+                Zıplama:{' '}
+                <strong className="text-purple-300">
+                  {playerObj.jumpsLeft ?? 1}/{maxJumps} ({jMode})
+                </strong>
+              </span>
+              <span>
+                Animasyon:{' '}
+                <strong className="text-sky-300 uppercase">
+                  [{playerObj.activeAnimation || 'idle'}]
+                </strong>
+              </span>
+            </div>
+            <div className="text-slate-400">
+              Aktif Nesne: <strong className="text-slate-200">{snapshot.objects.length}</strong>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Main Viewport Container */}
       {parityMode === 'exportedHtml' && exportedHtmlBlobUrl ? (

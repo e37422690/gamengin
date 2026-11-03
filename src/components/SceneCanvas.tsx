@@ -73,6 +73,7 @@ interface SceneCanvasProps {
   canUndo?: boolean;
   canRedo?: boolean;
   onCommitUndoSnapshot?: (label: string) => void;
+  onOpenBlocksForObject?: (objectId: string) => void;
 }
 
 type DragInteraction =
@@ -132,6 +133,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
   canUndo = false,
   canRedo = false,
   onCommitUndoSnapshot,
+  onOpenBlocksForObject,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -141,6 +143,13 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
   const [dragState, setDragState] = useState<DragInteraction | null>(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [activeTileBrush, setActiveTileBrush] = useState<TileBrushKind>('grass_ground');
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    worldX: number;
+    worldY: number;
+    objectId: string | null;
+  } | null>(null);
 
   // ResizeObserver for crisp HiDPI canvas
   useEffect(() => {
@@ -292,8 +301,8 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
         const gy = hoverRow * g;
         ctx.save();
         if (toolMode === 'tile_paint') {
-          const pal = TILE_BRUSH_PALETTE[activeTileBrush];
-          ctx.fillStyle = pal ? pal.fill : '#478CBF';
+          const pal = TILE_BRUSH_PALETTE.find((b) => b.kind === activeTileBrush);
+          ctx.fillStyle = pal ? pal.color : '#478CBF';
           ctx.globalAlpha = 0.55;
           ctx.fillRect(gx, gy, g, g);
           ctx.globalAlpha = 1;
@@ -499,6 +508,37 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
       return;
     }
 
+    // Right-click (button 2) opens Quick Context Menu on object or empty world coordinate
+    if (e.button === 2) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const menuX = rect ? Math.min(rect.width - 230, Math.max(12, e.clientX - rect.left)) : 120;
+      const menuY = rect ? Math.min(rect.height - 260, Math.max(12, e.clientY - rect.top)) : 120;
+      let hitObjId: string | null = null;
+      for (let i = sortedObjects.length - 1; i >= 0; i--) {
+        const obj = sortedObjects[i];
+        if (!obj.visible) continue;
+        if (
+          pt.x >= obj.x &&
+          pt.x <= obj.x + obj.width &&
+          pt.y >= obj.y &&
+          pt.y <= obj.y + obj.height
+        ) {
+          hitObjId = obj.id;
+          break;
+        }
+      }
+      if (hitObjId) onSelectObject(hitObjId);
+      setContextMenu({
+        x: menuX,
+        y: menuY,
+        worldX: snapValueToGrid(pt.x - 24, scene.gridSize, scene.snapToGrid),
+        worldY: snapValueToGrid(pt.y - 24, scene.gridSize, scene.snapToGrid),
+        objectId: hitObjId,
+      });
+      return;
+    }
+
+    setContextMenu(null);
     if (e.button !== 0) return;
 
     const selectedObj = scene.objects.find((o) => o.id === selectedObjectId);
@@ -964,6 +1004,176 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
           onDrop={handleDrop}
           className="block w-full h-full"
         />
+
+        {/* Interactive Right-Click Context Menu */}
+        {contextMenu && (
+          <div
+            style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+            className="absolute z-40 w-60 rounded-xl bg-[#141821]/98 backdrop-blur-md border border-[#478CBF]/60 shadow-2xl p-1.5 text-xs space-y-1"
+          >
+            {contextMenu.objectId ? (
+              (() => {
+                const ctxObj = scene.objects.find((o) => o.id === contextMenu.objectId);
+                if (!ctxObj) return null;
+                return (
+                  <>
+                    <div className="px-2.5 py-1.5 border-b border-[#2B3242] flex items-center justify-between">
+                      <span className="font-bold text-[#68B6FF] truncate">{ctxObj.name}</span>
+                      <span className="text-[10px] font-mono text-slate-400">{ctxObj.role}</span>
+                    </div>
+
+                    {onOpenBlocksForObject && (
+                      <button
+                        onClick={() => {
+                          onOpenBlocksForObject(ctxObj.id);
+                          setContextMenu(null);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#478CBF] text-emerald-300 hover:text-white font-semibold flex items-center justify-between"
+                      >
+                        <span>⚡ Blok Kodlarını Düzenle</span>
+                        <span className="text-[10px] opacity-80">Script</span>
+                      </button>
+                    )}
+
+                    {(ctxObj.role === 'player' ||
+                      ctxObj.role === 'enemy' ||
+                      ctxObj.role === 'npc') && (
+                      <button
+                        onClick={() => {
+                          onUpdateObject(
+                            ctxObj.id,
+                            (o) => ({
+                              ...o,
+                              physics: {
+                                ...o.physics,
+                                initialFacing:
+                                  (o.physics.initialFacing ?? 1) === 1 ? -1 : 1,
+                              },
+                            }),
+                            'Bakış Yönü Çevrildi'
+                          );
+                          setContextMenu(null);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#202634] text-slate-200 flex items-center justify-between"
+                      >
+                        <span>↔ Bakış Yönünü Ters Çevir</span>
+                        <span className="text-[10px] font-mono text-[#68B6FF]">
+                          {(ctxObj.physics.initialFacing ?? 1) === -1 ? '◀ SOL' : 'SAĞ ▶'}
+                        </span>
+                      </button>
+                    )}
+
+                    {ctxObj.role === 'invisible_wall' && (
+                      <div className="p-1.5 rounded-lg bg-[#0D1017] border border-[#2B3242] space-y-1">
+                        <div className="text-[10px] font-bold text-cyan-400 px-1">
+                          🛡️ Etkilenecek Karakter Grubu:
+                        </div>
+                        {[
+                          { id: 'all', label: 'Tüm Karakterler' },
+                          { id: 'player_only', label: 'Sadece Kahraman (Player)' },
+                          { id: 'enemies_only', label: 'Sadece Düşmanlar (Enemy)' },
+                        ].map((f) => (
+                          <button
+                            key={f.id}
+                            onClick={() => {
+                              onUpdateObject(
+                                ctxObj.id,
+                                (o) => ({
+                                  ...o,
+                                  collision: {
+                                    ...o.collision,
+                                    wallTargetFilter: f.id as any,
+                                  },
+                                }),
+                                'Görünmez Duvar Filtresi Değiştirildi'
+                              );
+                              setContextMenu(null);
+                            }}
+                            className={`w-full text-left px-2 py-1 rounded text-[11px] ${
+                              (ctxObj.collision.wallTargetFilter || 'all') === f.id
+                                ? 'bg-cyan-500/20 text-cyan-300 font-bold'
+                                : 'text-slate-300 hover:bg-[#181C24]'
+                            }`}
+                          >
+                            ✓ {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        onDuplicateSelected();
+                        setContextMenu(null);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#202634] text-slate-200 flex items-center justify-between"
+                    >
+                      <span>📋 Çoğalt</span>
+                      <span className="text-[10px] font-mono text-slate-400">Ctrl+D</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        onUpdateObject(
+                          ctxObj.id,
+                          (o) => ({ ...o, zIndex: (o.zIndex || 1) + 1 }),
+                          'Z-Index Artırıldı'
+                        );
+                        setContextMenu(null);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#202634] text-slate-200 flex items-center justify-between"
+                    >
+                      <span>⬆️ Katmanda Öne Getir</span>
+                      <span className="text-[10px] font-mono text-slate-400">Z+1</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        onDeleteSelected();
+                        setContextMenu(null);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-600/25 text-rose-300 font-semibold flex items-center justify-between"
+                    >
+                      <span>🗑️ Düğümü Sil</span>
+                      <span className="text-[10px] font-mono">Del</span>
+                    </button>
+                  </>
+                );
+              })()
+            ) : (
+              <>
+                <div className="px-2.5 py-1.5 border-b border-[#2B3242] flex items-center justify-between">
+                  <span className="font-bold text-slate-200">Buraya Nesne Ekle</span>
+                  <span className="text-[10px] font-mono text-[#68B6FF]">
+                    ({contextMenu.worldX}, {contextMenu.worldY})
+                  </span>
+                </div>
+                {[
+                  { role: 'player' as ObjectRole, label: '🦸 Kahraman (Player)' },
+                  { role: 'platform' as ObjectRole, label: '🧱 Platform (Zemin)' },
+                  { role: 'moving_platform' as ObjectRole, label: '🛗 Hareketli Platform' },
+                  { role: 'invisible_wall' as ObjectRole, label: '🛡️ Görünmez Sınır Duvarı' },
+                  { role: 'enemy' as ObjectRole, label: '👾 Devriye Düşman (Slime)' },
+                  { role: 'collectible' as ObjectRole, label: '🪙 Altın Ödülü (Coin)' },
+                  { role: 'checkpoint' as ObjectRole, label: '🚩 Kayıt Noktası (Checkpoint)' },
+                  { role: 'bounce_pad' as ObjectRole, label: '🍄 Trambolin Yay' },
+                  { role: 'goal' as ObjectRole, label: '🏁 Bölüm Sonu Bayrağı' },
+                ].map((sp) => (
+                  <button
+                    key={sp.role}
+                    onClick={() => {
+                      onAddObjectRole(sp.role, contextMenu.worldX, contextMenu.worldY);
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#478CBF] text-slate-200 hover:text-white transition-colors"
+                  >
+                    + {sp.label}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="pointer-events-none absolute bottom-3 left-7 flex items-center gap-2 bg-[#181C24]/95 backdrop-blur-md px-3 py-1.5 rounded-md border border-[#2B3242] text-[11px] text-slate-400">
           <span>
